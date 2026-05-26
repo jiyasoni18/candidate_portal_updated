@@ -1,6 +1,7 @@
 export interface JobSummary {
   id: string;
   title: string;
+  company_name?: string;
 }
 
 export interface SessionSummary {

@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 import aiofiles
 import asyncpg
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, field_serializer
 
 from api.dependencies import get_db, get_current_user_id
@@ -17,6 +18,7 @@ from schemas.livekit import RoomMetadataPayload, StartSessionResponse
 from schemas.session_complete import SessionCompletePayload, SessionCompleteResponse
 from services.background_pipeline import grade_session_background, process_session_background
 from services.enhanced_analyzer import refine_custom_additions, generate_ats_pdf
+from services.document_extraction import extract_url_text, extract_resume_text
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,7 @@ class InitializeSessionResponse(BaseModel):
 class JobSummary(BaseModel):
     id: UUID
     title: str
+    company_name: Optional[str] = None
 
     @field_serializer("id")
     def serialize_uuid(self, v: UUID) -> str:
@@ -84,6 +87,15 @@ class SessionDetailResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # 5.4 Refine endpoint request/response models
 # ---------------------------------------------------------------------------
+
+class InitializeSessionRequest(BaseModel):
+    job_title: str
+    company_name: str = ""
+    job_description: Optional[str] = None
+    jd_type: str = "text"  # "text", "url", "file"
+    jd_url: Optional[str] = None
+    pre_refined: Optional[bool] = False
+
 
 class RefineCustomAdditionsRequest(BaseModel):
     custom_additions: str
@@ -124,7 +136,8 @@ async def list_sessions(
                 ps.resume_report,
                 ps.enhanced_analysis,
                 pj.id          AS job_id,
-                pj.title       AS job_title
+                pj.title       AS job_title,
+                pj.company_name AS company_name
             FROM practice_sessions ps
             INNER JOIN practice_jobs pj ON ps.job_id = pj.id
             WHERE ps.user_id = $1
@@ -141,11 +154,19 @@ async def list_sessions(
             session_id=row["session_id"],
             status=row["status"],
             created_at=row["created_at"],
-            job=JobSummary(id=row["job_id"], title=row["job_title"]),
+            job=JobSummary(
+                id=row["job_id"], 
+                title=row["job_title"], 
+                company_name=row["company_name"]
+            ),
             resume_score=(
-                (json.loads(row["resume_report"]) if isinstance(row["resume_report"], str) else row["resume_report"])["score"]
-                if row["resume_report"] is not None
-                else None
+                (json.loads(row["enhanced_analysis"]) if isinstance(row["enhanced_analysis"], str) else row["enhanced_analysis"])["match_score"]
+                if row["enhanced_analysis"] is not None
+                else (
+                    (json.loads(row["resume_report"]) if isinstance(row["resume_report"], str) else row["resume_report"])["score"]
+                    if row["resume_report"] is not None
+                    else None
+                )
             ),
             enhanced_metrics=(
                 json.loads(row["enhanced_analysis"]) if row["enhanced_analysis"] is not None else None
@@ -186,7 +207,8 @@ async def get_session(
                 ps.enhanced_analysis,
                 ps.transcript,
                 pj.id                AS job_id,
-                pj.title             AS job_title
+                pj.title             AS job_title,
+                pj.company_name      AS company_name
             FROM practice_sessions ps
             INNER JOIN practice_jobs pj ON ps.job_id = pj.id
             WHERE ps.id = $1 AND ps.user_id = $2
@@ -221,7 +243,11 @@ async def get_session(
         session_id=row["session_id"],
         status=row["status"],
         created_at=row["created_at"],
-        job=JobSummary(id=row["job_id"], title=row["job_title"]),
+        job=JobSummary(
+            id=row["job_id"], 
+            title=row["job_title"], 
+            company_name=row["company_name"]
+        ),
         resume_report=_parse_json(row["resume_report"]) if expose_results else None,
         generated_questions=raw_questions if expose_results else None,
         interview_assessment=_parse_json(row["interview_assessment"]) if row["status"] == "completed" else None,
@@ -229,6 +255,28 @@ async def get_session(
         transcript=_parse_json(row["transcript"]) if row["status"] == "completed" else None,
     )
 
+
+@router.get("/session/{session_id}/resume")
+async def get_session_resume(
+    session_id: UUID,
+    user_id: UUID = Depends(get_current_user_id),
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """Serve the original uploaded resume file."""
+    row = await conn.fetchrow(
+        "SELECT resume_url FROM practice_sessions WHERE id = $1 AND user_id = $2",
+        session_id,
+        user_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Session not found.")
+        
+    file_path = row["resume_url"]
+    if not file_path or not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Resume file not found on server.")
+        
+    filename = os.path.basename(file_path)
+    return FileResponse(file_path, filename=filename)
 
 # ---------------------------------------------------------------------------
 # 3.2 POST /practice/initialize endpoint
@@ -239,20 +287,44 @@ async def initialize_session(
     request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    jd_text: str = Form(...),
+    job_title: str = Form("Target Job Role"),
+    company_name: str = Form("—"),
+    jd_type: str = Form("text"),
+    jd_text: Optional[str] = Form(None),
+    jd_url: Optional[str] = Form(None),
+    jd_file: Optional[UploadFile] = File(None),
     user_id: UUID = Depends(get_current_user_id),
     conn: asyncpg.Connection = Depends(get_db),
 ) -> InitializeSessionResponse:
-    """Initialize a new practice session.
-
-    1. Persist the uploaded PDF to local storage.
-    2. Insert coordinated rows into practice_jobs and practice_sessions.
-    3. Schedule the Phase 4 processing pipeline as a background task.
-    4. Return 201 with session metadata.
-    """
+    """Initialize a new practice session."""
     session_id = uuid4()
     job_id = uuid4()
-    file_path = f"{settings.STORAGE_ROOT}/{session_id}/resume.pdf"
+    
+    # Save resume with correct extension
+    resume_ext = ".docx" if file.filename.lower().endswith(".docx") else ".pdf"
+    file_path = f"{settings.STORAGE_ROOT}/{session_id}/resume{resume_ext}"
+
+    # Extract JD text based on type
+    final_jd_text = ""
+    try:
+        if jd_type == "url" and jd_url:
+            final_jd_text = await extract_url_text(jd_url)
+        elif jd_type == "file" and jd_file:
+            jd_ext = ".docx" if jd_file.filename.lower().endswith(".docx") else ".pdf"
+            jd_path = f"{settings.STORAGE_ROOT}/{session_id}/jd{jd_ext}"
+            os.makedirs(os.path.dirname(jd_path), exist_ok=True)
+            contents = await jd_file.read()
+            async with aiofiles.open(jd_path, "wb") as f:
+                await f.write(contents)
+            final_jd_text = await extract_resume_text(jd_path)
+        else:
+            final_jd_text = jd_text or ""
+            
+        if not final_jd_text.strip():
+            raise ValueError("Job description is empty.")
+    except Exception as exc:
+        logger.error("Error extracting JD: %s", exc)
+        raise HTTPException(status_code=400, detail=f"Failed to process job description: {exc}")
 
     # --- File I/O (must succeed before any DB writes) ---
     try:
@@ -269,13 +341,14 @@ async def initialize_session(
         async with conn.transaction():
             await conn.execute(
                 """
-                INSERT INTO practice_jobs (id, user_id, title, description)
-                VALUES ($1, $2, $3, $4)
+                INSERT INTO practice_jobs (id, user_id, title, description, company_name)
+                VALUES ($1, $2, $3, $4, $5)
                 """,
                 job_id,
                 user_id,
-                "Target Job Role",
-                jd_text,
+                job_title,
+                final_jd_text,
+                company_name,
             )
             await conn.execute(
                 """

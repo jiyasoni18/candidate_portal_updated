@@ -13,6 +13,7 @@ The grading pipeline (interview_grader.py) runs separately after the interview e
 """
 import json
 import logging
+import asyncio
 
 from services.document_extraction import extract_resume_text
 from services.resume_parser import parse_resume
@@ -39,19 +40,7 @@ async def process_session_background(
         raw_text = await extract_resume_text(file_path)
         logger.info("Text extracted (%d chars) — session_id=%s", len(raw_text), session_id)
 
-        # Stage 2 — Parse the resume into structured data
-        parsed_resume = await parse_resume(raw_text)
-        logger.info("Resume parsed — session_id=%s", session_id)
-
-        async with db_pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE practice_sessions SET resume_parsed=$1, status='scoring' WHERE id=$2",
-                parsed_resume.model_dump_json(),
-                session_id,
-            )
-        logger.info("DB updated to 'scoring' — session_id=%s", session_id)
-
-        # Fetch the job description text needed for Stage 3
+        # Fetch the job description text needed for Stage 3 and Enhanced Analysis
         async with db_pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT description FROM practice_jobs WHERE id=$1",
@@ -64,18 +53,35 @@ async def process_session_background(
             return
         jd_text: str = row["description"]
 
-        # Stage 3 — Score resume against JD and generate interview questions
-        report, questions = await analyse_resume_against_jd(parsed_resume, jd_text)
-        logger.info("Resume analysis complete — session_id=%s", session_id)
-
-        # Stage 4 — Run enhanced analysis (non-blocking, with fallback)
-        enhanced_analysis = None
-        try:
-            enhanced_analysis = await analyze_resume_enhanced(
+        # Start the enhanced analysis concurrently since it only needs raw_text and jd_text
+        enhanced_analysis_task = asyncio.create_task(
+            analyze_resume_enhanced(
                 raw_text,
                 jd_text,
                 api_key=settings.OPENROUTER_API_KEY,
             )
+        )
+
+        # Stage 2 — Parse the resume into structured data
+        parsed_resume = await parse_resume(raw_text)
+        logger.info("Resume parsed — session_id=%s", session_id)
+
+        async with db_pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE practice_sessions SET resume_parsed=$1, status='scoring' WHERE id=$2",
+                parsed_resume.model_dump_json(),
+                session_id,
+            )
+        logger.info("DB updated to 'scoring' — session_id=%s", session_id)
+
+        # Stage 3 — Score resume against JD and generate interview questions
+        report, questions = await analyse_resume_against_jd(parsed_resume, jd_text)
+        logger.info("Resume analysis complete — session_id=%s", session_id)
+
+        # Stage 4 — Await the enhanced analysis that was running in the background
+        enhanced_analysis = None
+        try:
+            enhanced_analysis = await enhanced_analysis_task
             logger.info("Enhanced analysis complete — session_id=%s", session_id)
         except Exception as exc:  # noqa: BLE001
             logger.warning(

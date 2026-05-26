@@ -157,3 +157,46 @@ export async function generatePDF(
   }
   return res.blob();
 }
+
+export async function deleteSession(sessionId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/practice/session/${sessionId}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      if (body.detail) detail = body.detail;
+    } catch {
+      // ignore
+    }
+    throw new ApiError(res.status, detail);
+  }
+}
+
+export async function downloadResume(sessionId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/practice/session/${sessionId}/resume`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      if (body.detail) detail = body.detail;
+    } catch {
+      // ignore
+    }
+    throw new ApiError(res.status, detail);
+  }
+  
+  const blob = await res.blob();
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.target = "_blank";
+  // Attempt to open in a new tab; browser might block if not directly triggered by user click, 
+  // but this is called in an onClick handler, so it should be fine.
+  a.click();
+  window.URL.revokeObjectURL(url);
+}

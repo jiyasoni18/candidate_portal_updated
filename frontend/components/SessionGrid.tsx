@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { SessionSummary } from '@/types/session';
 import StatusBadge from './StatusBadge';
+import { downloadResume } from '@/lib/api';
 
 interface SessionGridProps {
   sessions: SessionSummary[];
@@ -21,6 +22,7 @@ export default function SessionGrid({ sessions }: SessionGridProps) {
         <thead className="text-xs text-zinc-500 uppercase bg-zinc-800/50">
           <tr>
             <th className="px-4 py-3">Target Role</th>
+            <th className="px-4 py-3">Company</th>
             <th className="px-4 py-3">Created</th>
             <th className="px-4 py-3">Status</th>
             <th className="px-4 py-3">Score</th>
@@ -34,6 +36,7 @@ export default function SessionGrid({ sessions }: SessionGridProps) {
             return (
               <tr key={session.session_id} className="hover:bg-zinc-800/30 transition-colors">
                 <td className="px-4 py-3 font-medium text-zinc-100">{session.job.title}</td>
+                <td className="px-4 py-3 text-zinc-400">{session.job.company_name || '—'}</td>
                 <td className="px-4 py-3 text-zinc-400">
                   {new Date(session.created_at).toLocaleDateString()}
                 </td>
@@ -69,6 +72,18 @@ export default function SessionGrid({ sessions }: SessionGridProps) {
                         Resume Report
                       </Link>
                     )}
+                    <button
+                      onClick={async () => {
+                        try {
+                          await downloadResume(session.session_id);
+                        } catch (err) {
+                          alert("Could not load resume.");
+                        }
+                      }}
+                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-zinc-400 hover:text-zinc-200 text-xs font-medium rounded-lg border border-zinc-700 transition-colors whitespace-nowrap"
+                    >
+                      View Resume
+                    </button>
                   </div>
                 </td>
               </tr>

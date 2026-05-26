@@ -31,7 +31,7 @@ async def call_openrouter(system_prompt: str, user_content: str, model: str | No
         "max_tokens": 4096,
     }
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    async with httpx.AsyncClient(timeout=300.0) as client:
         response = await client.post(OPENROUTER_BASE_URL, json=payload, headers=headers)
 
         if response.status_code != 200:

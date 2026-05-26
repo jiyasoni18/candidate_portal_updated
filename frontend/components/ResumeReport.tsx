@@ -48,7 +48,7 @@ export default function ResumeReport({ enhancedAnalysis }: ResumeReportProps) {
         </div>
       </div>
 
-      {core_strengths.length > 0 && (
+      {core_strengths && core_strengths.length > 0 && (
         <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-5 mb-4">
           <h3 className="text-emerald-400 font-semibold text-sm mb-3">Core Strengths</h3>
           <ul className="space-y-2">
@@ -62,7 +62,7 @@ export default function ResumeReport({ enhancedAnalysis }: ResumeReportProps) {
         </div>
       )}
 
-      {gaps.length > 0 && (
+      {gaps && gaps.length > 0 && (
         <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-5 mb-4">
           <h3 className="text-amber-400 font-semibold text-sm mb-3">Gaps</h3>
           <ul className="space-y-2">
@@ -76,7 +76,7 @@ export default function ResumeReport({ enhancedAnalysis }: ResumeReportProps) {
         </div>
       )}
 
-      {improvements.length > 0 && (
+      {improvements && improvements.length > 0 && (
         <div className="bg-indigo-500/5 border border-indigo-500/20 rounded-xl p-5">
           <h3 className="text-indigo-400 font-semibold text-sm mb-3">Improvements</h3>
           <ul className="space-y-2">
@@ -93,7 +93,8 @@ export default function ResumeReport({ enhancedAnalysis }: ResumeReportProps) {
   );
 }
 
-function getScoreColor(score: number): string {
+function getScoreColor(score: number | null | undefined): string {
+  if (score == null) return "text-zinc-400";
   if (score >= 80) return "text-emerald-400";
   if (score >= 68) return "text-indigo-400";
   if (score >= 52) return "text-amber-400";

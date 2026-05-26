@@ -21,14 +21,43 @@ function GapCard({
 }) {
   return (
     <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-5">
-      <div className="flex items-start gap-3 mb-3">
+      <div className="flex items-start gap-3 mb-4">
         <span className="text-amber-400 font-bold mt-0.5 shrink-0">!</span>
         <p className="text-zinc-200 text-sm leading-relaxed">{gap}</p>
       </div>
+      
+      <div className="mb-4 flex flex-wrap items-center gap-4 bg-slate-900/50 p-3 rounded-lg border border-slate-700/50">
+        <span className="text-sm text-zinc-400">Do you have experience for this gap?</span>
+        <div className="flex gap-4">
+          <label className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+            <input 
+              type="radio" 
+              name={`gap-exp-${index}`} 
+              className="accent-indigo-500"
+              onChange={() => onChange(index, "")} 
+              defaultChecked 
+            />
+            Yes, I'll write it
+          </label>
+          <label className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+            <input 
+              type="radio" 
+              name={`gap-exp-${index}`} 
+              className="accent-indigo-500"
+              onChange={() => {
+                const skill = gap.split(':')[0] || 'this skill';
+                onChange(index, `GENERATE_PROJECT: ${skill}`);
+              }}
+            />
+            No, generate a basic project
+          </label>
+        </div>
+      </div>
+
       <textarea
         value={note}
         onChange={(e) => onChange(index, e.target.value)}
-        placeholder="Describe your experience or project that addresses this gap..."
+        placeholder="Describe your experience, or let the AI generate a project if you selected 'No' above..."
         rows={3}
         className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 resize-none focus:outline-none focus:border-indigo-500 transition-colors"
       />
@@ -108,7 +137,7 @@ function CustomAdditionsField({
 
 // ── TemplatePicker ────────────────────────────────────────────────────────────
 
-const TEMPLATES = ["Classic ATS", "Modern Accent", "Two-Column Professional"] as const;
+const TEMPLATES = ["Classic ATS with black", "Classic ATS with blue", "Two Column with black", "Two Column with blue"] as const;
 type Template = (typeof TEMPLATES)[number];
 
 function TemplatePicker({
@@ -224,7 +253,7 @@ export default function ResumeUpgradeWizardPage({
   const [gapNotes, setGapNotes] = useState<Record<string, string>>({});
   const [selectedImprovements, setSelectedImprovements] = useState<Set<number>>(new Set());
   const [customAdditions, setCustomAdditions] = useState("");
-  const [selectedTemplate, setSelectedTemplate] = useState<Template>("Classic ATS");
+  const [selectedTemplate, setSelectedTemplate] = useState<Template>("Classic ATS with black");
   const [isRefining, setIsRefining] = useState(false);
   const [refineError, setRefineError] = useState<string | null>(null);
 
@@ -243,9 +272,8 @@ export default function ResumeUpgradeWizardPage({
     fetchSession(session_id)
       .then((data) => {
         setSession(data);
-        // Pre-select all improvements by default
-        const improvements = data.enhanced_analysis?.improvements ?? [];
-        setSelectedImprovements(new Set(improvements.map((_, i) => i)));
+        // Do not pre-select improvements by default
+        setSelectedImprovements(new Set());
       })
       .catch((err) => {
         setLoadError(err instanceof ApiError ? err.detail : "Failed to load session.");
@@ -511,6 +539,8 @@ export default function ResumeUpgradeWizardPage({
 
       {/* Content */}
       <div className="max-w-3xl mx-auto px-6 py-8 space-y-10">
+
+
 
         {/* Gaps section */}
         <div>

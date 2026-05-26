@@ -258,19 +258,25 @@ Show ALL calculations explicitly:
 
 Sum all work durations using actual start/end dates. Exclude periods overlapping full-time education except internships (max 1 year counted).
 
+⚠️ KEYWORD FALLBACK RULE (If dates are missing):
+If a candidate lists no job dates or has 0 calculated experience:
+- If they explicitly call themselves a "Fresher" or "Entry-level" in their summary, set E = 0.
+- If they call themselves "Experienced" but provide no verifiable dates, set E = 0 but flag the missing dates.
+- If E = 0 and the JD requires 0 years (R=0), they still get the full experience score.
+
 ⚠️ SUMMARY CLAIM OVERRIDE RULE:
 NEVER use the candidate's own summary/headline to determine 
-experience years. Always compute from actual job dates only.
+experience years if dates are present. Always compute from actual job dates only.
 If the summary claims "X years of experience" but your date 
 calculation shows less, use YOUR calculation and flag the 
 discrepancy in date_integrity_violations[].
 
-Let R = {MIN_YEARS}, E = validated experience in years.
+Let R = {MIN_YEARS}, E = validated experience in years (or 0 if Fresher/no dates).
 
-IF E < 70% of R:
-  → Return only the dropped JSON (score=0, dropped=true, drop_reason="experience_threshold")
+IF E < R:
+  → Flag an experience gap but PROCEED to the next sections. (Do NOT drop the candidate).
 
-IF E >= 70% of R: proceed to GATE 3.
+IF E >= R: proceed to GATE 3.
 
 ---
 
@@ -318,11 +324,8 @@ SECTION 1 — EXPERIENCE (Max: {W_EXP})
 
 [Use the validated E value from GATE 2.]
 
-- 70% ≤ E < 100% of R → interpolate 0% to 80%
-- E = R → 80%
-- R < E ≤ 125% of R → interpolate 80% to 90%
-- 125% < E ≤ 150% of R → interpolate 90% to 100%
-- E > 150% of R → 100%
+- E < R → 0% of {W_EXP} (No experience score)
+- E >= R → 100% of {W_EXP} (Full experience score)
 
 Freelance flag (no score penalty): If freelance/contract > 60% of total experience AND the JD contains any of [enterprise, corporate, cross-functional, stakeholder, team leadership, compliance, on-site], set freelance_flag = true.
 
@@ -584,25 +587,27 @@ Return ONLY a valid JSON object. No markdown, no explanation outside the JSON.
 "gaps": [
   "<MANDATORY: List every gap found across ALL sections below.
   
+  IMPORTANT: For every gap identified, you MUST provide actionable advice on exactly what the candidate should add, learn, or clarify to improve their Match Score above 85. 
+
   Include gaps from these sources — check each one before writing:
   
   1. SKILL GAPS (from Section 2): Every mandatory skill rated ABSENT or PRESENT+WEAK. 
-     Format: 'Missing mandatory skill: [skill name] — [one line why it matters]'
+     Format: 'Missing mandatory skill: [skill name] — [Actionable advice on what to learn/add to boost score > 85]'
   
   2. EXPERIENCE GAPS (from Gate 2 + Section 1): If E < R, state it explicitly.
-     Format: 'Experience gap: [X] years found vs [Y] years required'
+     Format: 'Experience gap: [X] years found vs [Y] years required — [Actionable advice on how to bridge this gap]'
   
   3. EMPLOYMENT GAPS (from Gate 3): Every gap where reason_found=false.
-     Format: 'Unexplained employment gap: [from] to [to] ([N] months)'
+     Format: 'Unexplained employment gap: [from] to [to] ([N] months) — [Advice to clarify this to improve score]'
   
   4. EDUCATION GAPS (from Section 5): If hard_qualification_gap=true or score below 50%.
-     Format: 'Education gap: [what is required] vs [what candidate has]'
+     Format: 'Education gap: [what is required] vs [what candidate has] — [Advice on certifications/courses to compensate]'
   
   5. CONSISTENCY GAPS (from Section 4): If avg tenure < 12 months or 2+ consecutive short stints.
-     Format: 'Consistency concern: avg tenure [X] months — [brief reason]'
+     Format: 'Consistency concern: avg tenure [X] months — [Advice to explain tenure to recruiters]'
   
   6. DOMAIN/SENIORITY MISMATCH: If candidate background is in a different domain or level.
-     Format: 'Domain mismatch: [candidate domain] vs [required domain]'
+     Format: 'Domain mismatch: [candidate domain] vs [required domain] — [Advice on how to pivot]'
   
   If a section has NO gap, skip it — do not add placeholder text.
   If no gaps are found across all 6 sources above, return exactly: ["No gaps identified — candidate meets all requirements"]

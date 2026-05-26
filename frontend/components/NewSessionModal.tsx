@@ -14,55 +14,97 @@ export default function NewSessionModal({ open, onClose }: NewSessionModalProps)
   const router = useRouter();
 
   const [jobTitle, setJobTitle] = useState("");
+  const [companyName, setCompanyName] = useState("");
+  const [jdType, setJdType] = useState<"text" | "url" | "file">("text");
   const [jdText, setJdText] = useState("");
+  const [jdUrl, setJdUrl] = useState("");
+  const [jdFile, setJdFile] = useState<File | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [jdDragOver, setJdDragOver] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const jdFileInputRef = useRef<HTMLInputElement>(null);
 
   // Reset all state when modal closes
   useEffect(() => {
     if (!open) {
       setJobTitle("");
+      setCompanyName("");
+      setJdType("text");
       setJdText("");
+      setJdUrl("");
+      setJdFile(null);
       setFile(null);
       setSubmitting(false);
       setFieldErrors({});
       setSubmitError(null);
       setDragOver(false);
+      setJdDragOver(false);
     }
   }, [open]);
 
   // --- File handling ---
   function validateAndSetFile(selected: File) {
-    if (!selected.name.toLowerCase().endsWith(".pdf")) {
-      setFieldErrors((prev) => ({ ...prev, file: "Only PDF files are accepted." }));
+    const isDocx = selected.name.toLowerCase().endsWith(".docx");
+    const isPdf = selected.name.toLowerCase().endsWith(".pdf");
+    if (!isDocx && !isPdf) {
+      setFieldErrors((prev) => ({ ...prev, file: "Only PDF or DOCX files are accepted." }));
       return;
     }
     setFieldErrors((prev) => { const next = { ...prev }; delete next.file; return next; });
     setFile(selected);
   }
 
+  function validateAndSetJdFile(selected: File) {
+    const isDocx = selected.name.toLowerCase().endsWith(".docx");
+    const isPdf = selected.name.toLowerCase().endsWith(".pdf");
+    if (!isDocx && !isPdf) {
+      setFieldErrors((prev) => ({ ...prev, jdText: "Only PDF or DOCX files are accepted." }));
+      return;
+    }
+    setFieldErrors((prev) => { const next = { ...prev }; delete next.jdText; return next; });
+    setJdFile(selected);
+  }
+
+  // --- Handlers for JD File Drag & Drop ---
+  function handleJdDragOver(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setJdDragOver(true);
+  }
+  function handleJdDragLeave(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setJdDragOver(false);
+  }
+  function handleJdDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setJdDragOver(false);
+    const dropped = e.dataTransfer.files[0];
+    if (dropped) validateAndSetJdFile(dropped);
+  }
+  function handleJdFileInput(e: React.ChangeEvent<HTMLInputElement>) {
+    const selected = e.target.files?.[0];
+    if (selected) validateAndSetJdFile(selected);
+  }
+
+  // --- Handlers for Resume Drag & Drop ---
   function handleDragOver(e: React.DragEvent<HTMLDivElement>) {
     e.preventDefault();
     setDragOver(true);
   }
-
   function handleDragLeave(e: React.DragEvent<HTMLDivElement>) {
     e.preventDefault();
     setDragOver(false);
   }
-
   function handleDrop(e: React.DragEvent<HTMLDivElement>) {
     e.preventDefault();
     setDragOver(false);
     const dropped = e.dataTransfer.files[0];
     if (dropped) validateAndSetFile(dropped);
   }
-
   function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
     const selected = e.target.files?.[0];
     if (selected) validateAndSetFile(selected);
@@ -72,8 +114,12 @@ export default function NewSessionModal({ open, onClose }: NewSessionModalProps)
   function validate(): boolean {
     const errors: Record<string, string> = {};
     if (!jobTitle.trim()) errors.jobTitle = "Job title is required.";
-    if (!jdText.trim()) errors.jdText = "Job description is required.";
-    if (!file) errors.file = "A PDF resume is required.";
+    
+    if (jdType === "text" && !jdText.trim()) errors.jdText = "Job description text is required.";
+    if (jdType === "url" && !jdUrl.trim()) errors.jdText = "Job description URL is required.";
+    if (jdType === "file" && !jdFile) errors.jdText = "Job description file is required.";
+    
+    if (!file) errors.file = "A PDF or DOCX resume is required.";
     setFieldErrors(errors);
     return Object.keys(errors).length === 0;
   }
@@ -89,7 +135,17 @@ export default function NewSessionModal({ open, onClose }: NewSessionModalProps)
     try {
       const formData = new FormData();
       formData.append("file", file!);
-      formData.append("jd_text", jdText);
+      formData.append("job_title", jobTitle);
+      formData.append("company_name", companyName || "—");
+      formData.append("jd_type", jdType);
+      
+      if (jdType === "text") {
+        formData.append("jd_text", jdText);
+      } else if (jdType === "url") {
+        formData.append("jd_url", jdUrl);
+      } else if (jdType === "file" && jdFile) {
+        formData.append("jd_file", jdFile);
+      }
 
       const { session_id } = await initializeSession(formData);
       router.push(`/practice/${session_id}`);
@@ -136,19 +192,100 @@ export default function NewSessionModal({ open, onClose }: NewSessionModalProps)
             )}
           </div>
 
+          {/* Company Name */}
+          <div>
+            <label className="block text-sm font-medium text-zinc-300 mb-1" htmlFor="companyName">
+              Company Name <span className="text-zinc-500 font-normal">(Optional)</span>
+            </label>
+            <input
+              id="companyName"
+              type="text"
+              value={companyName}
+              onChange={(e) => setCompanyName(e.target.value)}
+              placeholder="e.g. Acme Corp"
+              className="w-full rounded-lg bg-slate-900 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+
           {/* Job Description */}
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1" htmlFor="jdText">
-              Job Description
-            </label>
-            <textarea
-              id="jdText"
-              value={jdText}
-              onChange={(e) => setJdText(e.target.value)}
-              rows={4}
-              placeholder="Paste the job description here..."
-              className="w-full rounded-lg bg-slate-900 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
-            />
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-sm font-medium text-zinc-300">
+                Job Description
+              </label>
+              <div className="flex bg-slate-900 rounded-lg p-1 border border-zinc-700">
+                {(["text", "url", "file"] as const).map((type) => (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() => {
+                      setJdType(type);
+                      setFieldErrors((prev) => { const next = { ...prev }; delete next.jdText; return next; });
+                    }}
+                    className={`px-3 py-1 text-xs rounded-md transition-colors ${
+                      jdType === type
+                        ? "bg-indigo-600 text-white font-medium shadow-sm"
+                        : "text-zinc-400 hover:text-zinc-200"
+                    }`}
+                  >
+                    {type.charAt(0).toUpperCase() + type.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </div>
+            
+            {jdType === "text" && (
+              <textarea
+                id="jdText"
+                value={jdText}
+                onChange={(e) => setJdText(e.target.value)}
+                rows={4}
+                placeholder="Paste the job description here..."
+                className="w-full rounded-lg bg-slate-900 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+              />
+            )}
+            
+            {jdType === "url" && (
+              <input
+                id="jdUrl"
+                type="url"
+                value={jdUrl}
+                onChange={(e) => setJdUrl(e.target.value)}
+                placeholder="https://linkedin.com/jobs/..."
+                className="w-full rounded-lg bg-slate-900 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            )}
+            
+            {jdType === "file" && (
+              <div
+                onDragOver={handleJdDragOver}
+                onDragLeave={handleJdDragLeave}
+                onDrop={handleJdDrop}
+                onClick={() => jdFileInputRef.current?.click()}
+                className={`flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-4 py-4 cursor-pointer transition-colors ${
+                  jdDragOver
+                    ? "border-indigo-500 bg-indigo-500/10"
+                    : "border-zinc-600 hover:border-zinc-500 bg-slate-900"
+                }`}
+              >
+                <UploadCloud size={20} className="text-zinc-400" />
+                {jdFile ? (
+                  <p className="text-sm text-zinc-300">{jdFile.name}</p>
+                ) : (
+                  <p className="text-xs text-zinc-500">
+                    Upload JD (PDF or DOCX)
+                  </p>
+                )}
+                <input
+                  ref={jdFileInputRef}
+                  type="file"
+                  accept=".pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  className="hidden"
+                  onChange={handleJdFileInput}
+                />
+              </div>
+            )}
+            
             {fieldErrors.jdText && (
               <p className="mt-1 text-xs text-red-400">{fieldErrors.jdText}</p>
             )}
@@ -157,7 +294,7 @@ export default function NewSessionModal({ open, onClose }: NewSessionModalProps)
           {/* File Upload */}
           <div>
             <label className="block text-sm font-medium text-zinc-300 mb-1">
-              Resume (PDF)
+              Resume (PDF or DOCX)
             </label>
             <div
               onDragOver={handleDragOver}
@@ -175,13 +312,13 @@ export default function NewSessionModal({ open, onClose }: NewSessionModalProps)
                 <p className="text-sm text-zinc-300">{file.name}</p>
               ) : (
                 <p className="text-sm text-zinc-500">
-                  Drag & drop a PDF or <span className="text-indigo-400 underline">browse</span>
+                  Drag & drop a PDF/DOCX or <span className="text-indigo-400 underline">browse</span>
                 </p>
               )}
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".pdf"
+                accept=".pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 className="hidden"
                 onChange={handleFileInput}
               />

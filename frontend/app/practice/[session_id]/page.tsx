@@ -109,17 +109,17 @@ const accentMap = {
   emerald: {
     heading: "text-emerald-400",
     icon: "text-emerald-500",
-    bg: "bg-emerald-500/5 border-emerald-500/20",
+    bg: "bg-emerald-500/5 border-emerald-500/20 shadow-emerald-500/5",
   },
   amber: {
     heading: "text-amber-400",
     icon: "text-amber-500",
-    bg: "bg-amber-500/5 border-amber-500/20",
+    bg: "bg-amber-500/5 border-amber-500/20 shadow-amber-500/5",
   },
   indigo: {
     heading: "text-indigo-400",
     icon: "text-indigo-500",
-    bg: "bg-indigo-500/5 border-indigo-500/20",
+    bg: "bg-indigo-500/5 border-indigo-500/20 shadow-indigo-500/5",
   },
 };
 
@@ -135,14 +135,23 @@ function ListCard({
   icon: string;
 }) {
   const { heading, icon: iconColor, bg } = accentMap[accent];
+  const validItems = items.filter(item => item && item.trim().length > 0);
+  
+  if (validItems.length === 0) return null;
+
   return (
-    <div className={`border rounded-xl p-5 h-full ${bg}`}>
-      <h3 className={`font-semibold text-sm mb-3 ${heading}`}>{title}</h3>
-      <ul className="space-y-2">
-        {items.map((item, i) => (
-          <li key={i} className="text-zinc-300 text-sm flex items-start gap-2">
-            <span className={`${iconColor} mt-0.5 shrink-0 font-bold`}>{icon}</span>
-            {item}
+    <div className={`rounded-2xl p-6 h-full border backdrop-blur-sm shadow-xl transition-all hover:-translate-y-1 ${bg}`}>
+      <div className="flex items-center gap-3 mb-5">
+        <div className={`flex items-center justify-center w-8 h-8 rounded-full bg-white/5 ${iconColor}`}>
+          <span className="font-bold text-sm">{icon}</span>
+        </div>
+        <h3 className={`font-bold text-base tracking-wide ${heading}`}>{title}</h3>
+      </div>
+      <ul className="space-y-4">
+        {validItems.map((item, i) => (
+          <li key={i} className="text-zinc-300 text-sm leading-relaxed flex items-start gap-3">
+            <span className={`${iconColor} mt-1.5 shrink-0 text-[10px]`}>✦</span>
+            <span className="opacity-90">{item}</span>
           </li>
         ))}
       </ul>
@@ -251,33 +260,38 @@ function AlignmentReport({ session }: { session: SessionDetail }) {
       </div>
 
       {/* ── Score header ── */}
-      <div className="shrink-0 border-b border-slate-800 px-8 py-6 flex items-center gap-8">
-        {/* JD Match */}
-        <div className="flex items-end gap-2">
-          <span className={`text-7xl font-bold tabular-nums leading-none ${getScoreStyle(matchScore).color}`}>
-            {matchScore ?? "—"}
-          </span>
-          <span className="text-zinc-500 text-sm mb-1">out of 100</span>
+      <div className="shrink-0 bg-gradient-to-r from-slate-900 via-slate-800/80 to-slate-900 border-b border-slate-800 px-8 py-8 flex flex-wrap items-center gap-6">
+        
+        {/* JD Match Card */}
+        <div className="flex items-center gap-6 bg-slate-800/40 backdrop-blur-md border border-slate-700/50 rounded-2xl p-6 shadow-xl w-full max-w-sm">
+          <div className="flex items-end gap-1">
+            <span className={`text-6xl font-black tracking-tight tabular-nums leading-none ${getScoreStyle(matchScore).color}`}>
+              {matchScore ?? "—"}
+            </span>
+            <span className="text-zinc-500 text-sm font-medium mb-1.5">/ 100</span>
+          </div>
+          <div className="w-px h-16 bg-slate-700/50" />
+          <div className="flex flex-col gap-2">
+            <span className="text-zinc-400 text-xs font-semibold uppercase tracking-wider">JD Match</span>
+            <span className={`text-xs font-bold px-3 py-1 rounded-full border text-center ${matchLabelColor}`}>
+              {matchLabel}
+            </span>
+          </div>
         </div>
 
-        <div className="w-px h-12 bg-slate-700" />
-
-        {/* Fit badge */}
-        <div className="flex flex-col gap-1">
-          <span className={`text-sm font-semibold px-3 py-1 rounded-full border ${matchLabelColor}`}>
-            {matchLabel}
-          </span>
-          <span className="text-zinc-500 text-xs">JD Match</span>
-        </div>
-
-        <div className="w-px h-12 bg-slate-700" />
-
-        {/* ATS Score */}
-        <div className="flex flex-col gap-1">
-          <span className={`text-3xl font-bold tabular-nums ${getScoreStyle(atsScore).color}`}>
-            {atsScore ?? "—"}
-          </span>
-          <span className="text-zinc-500 text-xs">ATS Score</span>
+        {/* ATS Score Card */}
+        <div className="flex items-center gap-6 bg-slate-800/40 backdrop-blur-md border border-slate-700/50 rounded-2xl p-6 shadow-xl w-full max-w-[280px]">
+          <div className="flex items-end gap-1">
+            <span className={`text-5xl font-black tracking-tight tabular-nums leading-none ${getScoreStyle(atsScore).color}`}>
+              {atsScore ?? "—"}
+            </span>
+            <span className="text-zinc-500 text-sm font-medium mb-1">/ 100</span>
+          </div>
+          <div className="w-px h-12 bg-slate-700/50" />
+          <div className="flex flex-col gap-1">
+            <span className="text-zinc-400 text-xs font-semibold uppercase tracking-wider">ATS Score</span>
+            <span className="text-zinc-500 text-[10px] uppercase tracking-wide">Formatting & Parsing</span>
+          </div>
         </div>
       </div>
 
@@ -316,22 +330,34 @@ function AlignmentReport({ session }: { session: SessionDetail }) {
 
         {/* OVERVIEW */}
         {activeTab === "overview" && (
-          <div className="space-y-6 w-full">
+          <div className="space-y-8 w-full max-w-6xl">
             {summary && (
-              <div>
-                <p className="text-zinc-500 text-xs font-medium uppercase tracking-wider mb-2">Summary</p>
-                <p className="text-zinc-200 text-base leading-relaxed">{summary}</p>
+              <div className="bg-slate-800/30 border border-slate-700/50 rounded-2xl p-6 shadow-lg backdrop-blur-md">
+                <p className="text-zinc-500 text-xs font-bold uppercase tracking-widest mb-3 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-indigo-500" />
+                  Executive Summary
+                </p>
+                <p className="text-zinc-200 text-[15px] leading-relaxed">{summary}</p>
               </div>
             )}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-stretch">
+            {e?.ats_explanation && (
+              <div className="bg-slate-800/30 border border-slate-700/50 rounded-2xl p-6 shadow-lg backdrop-blur-md">
+                <p className="text-zinc-500 text-xs font-bold uppercase tracking-widest mb-3 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-indigo-500" />
+                  ATS Parsing Analysis
+                </p>
+                <p className="text-zinc-200 text-[15px] leading-relaxed">{e.ats_explanation}</p>
+              </div>
+            )}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-stretch">
               {strengths.length > 0 && (
-                <ListCard title="Strengths" items={strengths} accent="emerald" icon="✓" />
+                <ListCard title="Core Strengths" items={strengths} accent="emerald" icon="✓" />
               )}
               {gaps.length > 0 && (
-                <ListCard title="Gaps" items={gaps} accent="amber" icon="!" />
+                <ListCard title="Identified Gaps" items={gaps} accent="amber" icon="!" />
               )}
               {improvements.length > 0 && (
-                <ListCard title="Terminology Improvements" items={improvements} accent="indigo" icon="→" />
+                <ListCard title="Improvements" items={improvements} accent="indigo" icon="→" />
               )}
             </div>
           </div>
