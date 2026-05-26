@@ -1,0 +1,23 @@
+# Phase 4: Async Extractor, Matcher, & Question Generation Pipeline
+
+## 1. Objective
+Build the asynchronous multi-stage processing function executed inside FastAPI's native `BackgroundTasks`. It extracts raw text from the stored PDF resume, converts it into structured JSON via Gemini/OpenRouter, scores it against the Job Description text, and builds exactly 8 personalized, non-theoretical screening questions.
+
+## 2. Structural Flow & State Transitions
+The background worker must execute three sequential pipelines, committing state changes and payload mutations back to the PostgreSQL `practice_sessions` table at each milestone:
+
+```mermaid
+graph TD
+    A[Start Background Task] --> B[PyMuPDF Text Extraction]
+    B --> C[Pipeline 1: Gemini Resume Parser]
+    C --> D[Update DB: status='scoring', save resume_parsed]
+    D --> E[Pipeline 2: Alignment Evaluator & Question Gen]
+    E --> F[Update DB: status='ready_to_start', save resume_report & generated_questions]
+    F --> G[End Task]
+
+3. Detailed Component Breakdown
+3.1. Document Extraction StageUtility: Use pymupdf (fitz) to stream raw text strings from the local file directory (./storage/resumes/{session_id}/resume.pdf).Sanitization: Trim the text payload boundary to a maximum of 25,000 characters to ensure safe token windows while keeping data context intact.
+
+3.2. Pipeline 1: Resume Profile ConversionTarget LLM: Gemini (lite tier variant, via OpenRouter integration layer).Behavior: Inject the raw text array into the structured parsing system prompt. The engine must enforce strict schema conformity, returning exclusively valid JSON matching the layout defined in schemas/resume.py (PersonalInfo, Experience, Projects, Education, Certifications).Persistence: Commit the resulting JSON string to the database column practice_sessions.resume_parsed and update status to 'scoring'.
+
+3.3. Pipeline 2: Matcher Analysis & Structured Question AssemblyContext Synthesis: Supply the LLM with the parsed resume JSON string, the raw input target jd_text, and implicit parameter instructions.Strict Prompt Instructions:Tone: Conversational, organic, and informal (e.g., framing entry statements with words like "So", "I noticed").Banned Language: Completely omit programmatic patterns and standard AI idioms (spearheaded, honed, leveraged, cross-functional, stakeholders, robust, deep dive).No Abstract Theory: Banned from querying conceptual definitions, language trivia, or direct coding queries (e.g., avoid "Explain the event loop" or "What is a database index"). Every single question must prompt the user to narrate actual background scenarios, past tools, and custom projects.Personalization Rule: At least 4 of the 8 generated items must dynamically extract and name explicit tool combinations, repositories, or specific previous employers found directly in the candidate's resume history.Narrative Sequence Mapping: Force-constrain the generation payload to exactly 8 sequential question items fitting this narrative order:Q1: Warm introduction and high-level background sweep.Q2-Q3: Resume-specific deep dive (interrogating direct historical projects, specific stack transitions, or tool selections).Q4-Q6: Target role alignment, work style preferences, or situational context relative to the target JD.Q7: Intrinsic professional growth patterns and structural transition motivations.Q8: Formal completion wrap-up and personal reflection question.Enrichment: Add structural metadata attributes on the fly: append the corresponding category tag ('opening', 'experience', 'rolefit', 'behavioral', 'situational', 'closing') and map matching default response timers (e.g., 120s or 150s) across individual blocks.3.4. Final Session SerializationCommit the generated datasets into PostgreSQL:Populate practice_sessions.resume_report with the overall score out of 100, high-level reference summaries, strengths, and alignment gap arrays.Populate practice_sessions.generated_questions with the validated array containing the 8 sequential enriched objects.Transition practice_sessions.status strictly to 'ready_to_start'.4. Verification Check ConstraintsThe Kiro agent must verify successful completion by using a mock script mocking the OpenRouter/Gemini API calls. Ensure that:The background thread catches failures gracefully without locking up the server worker process.The schema constraints handle missing values cleanly (e.g., if a candidate provides no previous certifications).The table attributes map from 'parsing' $\rightarrow$ 'scoring' $\rightarrow$ 'ready_to_start' correctly.    
