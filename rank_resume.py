@@ -337,14 +337,20 @@ Skills to evaluate: {mandatory_skills}
 
 ⚠️ JD-TITLE SKILL OVERRIDE — CHECK THIS FIRST:
 
-Check whether "{JD_TITLE_SKILL}" is PRESENT + PROVEN on the resume (backed by a real role, project, or result — not just listed in a skills section).
+Extract the primary TECHNICAL SKILL from "{JD_TITLE_SKILL}" (e.g. if JD title is "React Developer", the primary skill is "React"; if it is "Python Engineer", it is "Python").
 
-IF "{JD_TITLE_SKILL}" is ABSENT or PRESENT + WEAK:
+⚠️ ROLE-TITLE EXCEPTION (MANDATORY):
+If "{JD_TITLE_SKILL}" is a JOB ROLE title (e.g., "Data Scientist", "Software Engineer", "Product Manager", "Business Analyst", "ML Engineer"), this override rule does NOT apply. A job title is not a verifiable technical skill on a resume.
+→ In this case: SKIP this JD-TITLE SKILL OVERRIDE entirely. Proceed directly to the Gate and score each mandatory skill individually.
+
+ONLY apply the hard-zero rule below if "{JD_TITLE_SKILL}" is a TECHNOLOGY or TOOL name (e.g., "React", "Python", "Kubernetes", "Salesforce") — not a role name.
+
+IF (technical skill check only, not a role title) "{JD_TITLE_SKILL}" is ABSENT or PRESENT + WEAK:
   → Set core_skills_score = 0
   → Set jd_title_skill_failed = true
   → Skip remaining Section 2 scoring. Proceed to Section 3.
 
-IF "{JD_TITLE_SKILL}" is PRESENT + PROVEN:
+IF "{JD_TITLE_SKILL}" is PRESENT + PROVEN (or it is a role title — not a tech skill):
   → Continue below.
 
 LOCKED ORDER: Gate → Score.
@@ -464,6 +470,13 @@ If education is not specified in the JD, award 70% of {W_EDU} and skip to bonuse
 
 Classify candidate's highest qualification:
 L5 = Doctorate | L4 = Postgraduate | L3 = Undergraduate | L2 = Diploma/Associate | L1 = Certifications only | L0 = None listed
+
+⚠️ FIELD MATCHING RULE — MANDATORY FUZZY MATCH:
+When comparing degree fields, treat the following as EQUIVALENT and award "Same level and relevant field":
+- "Information Technology" = "Computer Science" = "Computer Engineering" = "Software Engineering" = "IT" = "CS" = "CSE" = "IS" = "Information Systems"
+- Any BE/BTech/BSc in any computing, software, electronics, or data-related field is considered relevant for software/data/AI roles.
+- Do NOT require the field names to match exactly word-for-word. Use semantic equivalence.
+- If the JD says "B Tech or B.E. (Computer Science / Information Technology)" and the candidate has "B.E. in Information Technology", this IS a match. Award "Same level and relevant field".
 
 Base score:
 - One level higher or more → 80%
@@ -585,34 +598,45 @@ Return ONLY a valid JSON object. No markdown, no explanation outside the JSON.
   ],
   "strengths": ["<strength 1>", "<strength 2>", "<strength 3>"],
 "gaps": [
-  "<MANDATORY: List every gap found across ALL sections below.
-  
-  IMPORTANT: For every gap identified, you MUST provide actionable advice on exactly what the candidate should add, learn, or clarify to improve their Match Score above 85. 
+  "<MANDATORY: List every gap found across ALL sections below. Use the EXACT terminology from the Job Description — copy phrases directly from the JD. Do not paraphrase or use generic labels.
 
-  Include gaps from these sources — check each one before writing:
-  
-  1. SKILL GAPS (from Section 2): Every mandatory skill rated ABSENT or PRESENT+WEAK. 
-     Format: 'Missing mandatory skill: [skill name] — [Actionable advice on what to learn/add to boost score > 85]'
-  
-  2. EXPERIENCE GAPS (from Gate 2 + Section 1): If E < R, state it explicitly.
-     Format: 'Experience gap: [X] years found vs [Y] years required — [Actionable advice on how to bridge this gap]'
-  
-  3. EMPLOYMENT GAPS (from Gate 3): Every gap where reason_found=false.
-     Format: 'Unexplained employment gap: [from] to [to] ([N] months) — [Advice to clarify this to improve score]'
-  
-  4. EDUCATION GAPS (from Section 5): If hard_qualification_gap=true or score below 50%.
-     Format: 'Education gap: [what is required] vs [what candidate has] — [Advice on certifications/courses to compensate]'
-  
-  5. CONSISTENCY GAPS (from Section 4): If avg tenure < 12 months or 2+ consecutive short stints.
-     Format: 'Consistency concern: avg tenure [X] months — [Advice to explain tenure to recruiters]'
-  
-  6. DOMAIN/SENIORITY MISMATCH: If candidate background is in a different domain or level.
-     Format: 'Domain mismatch: [candidate domain] vs [required domain] — [Advice on how to pivot]'
-  
-  If a section has NO gap, skip it — do not add placeholder text.
-  If no gaps are found across all 6 sources above, return exactly: ["No gaps identified — candidate meets all requirements"]
-  Maximum 8 gaps — prioritize most critical first.>"
+  For every gap, format it as:
+  '[Exact JD requirement phrase]: [What the resume shows vs what the JD needs] — [Specific actionable fix using JD keywords]'
+
+  EXAMPLE (correct):
+  ❌ WRONG: 'Missing mandatory skill: LLM experience'
+  ✓ CORRECT: 'Hands on experience with LLM models and basic knowledge of evaluation metrics for LLMs: Not explicitly demonstrated — Add a bullet under your RAG project: Evaluated LLM performance using accuracy and latency metrics as required by this role.'
+
+  Sources to check — use exact JD wording for each:
+
+  1. SKILL GAPS (from Section 2): Every mandatory skill rated ABSENT or PRESENT+WEAK.
+     Copy the EXACT skill name/phrase from the JD's Required Skills section.
+     Format: '[Exact JD skill phrase]: [resume evidence or lack thereof] — [Actionable fix with JD keywords to boost score above 85]'
+
+  2. EXPERIENCE GAPS (from Gate 2 + Section 1): If E < R, state it.
+     Use the exact experience requirement text from the JD.
+     Format: '[Exact JD experience requirement]: [E] years found vs [R] years required — [Advice]'
+
+  3. EMPLOYMENT GAPS (from Gate 3): Only if reason_found=false.
+     Format: 'Unexplained gap: [from] to [to] ([N] months) — Recommend addressing this in your cover letter or resume summary.'
+
+  4. EDUCATION GAPS (from Section 5): Only if hard_qualification_gap=true.
+     Use exact degree requirement from JD.
+     Format: '[Exact JD qualification requirement]: Candidate has [what they have] — [Advice]'
+
+  5. CONSISTENCY GAPS (from Section 4): Only if avg tenure < 12 months.
+     Format: 'Job stability: avg tenure [X] months — [Advice to explain tenure]'
+
+  6. DOMAIN/SENIORITY MISMATCH: Only if clearly different domain.
+     Use exact job title from JD.
+     Format: '[JD job title] role requires [domain/seniority]: Candidate background is in [candidate domain] — [Pivot advice]'
+
+  CRITICAL RULES:
+  - Use EXACT phrases from the JD — do not rephrase or generalize
+  - If a section has NO gap, skip it entirely
+  - Maximum 8 gaps — most critical first
+  - If no gaps at all: return exactly ['No gaps identified — candidate meets all requirements']>"
 ],
-"summary": "<3–5 sentences. Specific and honest. Name exact skills that are strong or missing. Mention if date penalty was applied. Explain the score. Do not be generic.>"
+"summary": "<3–5 sentences. Specific and honest. Use exact JD skill names when naming strengths or missing areas. State the score and key reasons. Do not be generic.>"
 }}
 """

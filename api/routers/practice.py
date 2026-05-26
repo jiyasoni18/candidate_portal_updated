@@ -256,7 +256,41 @@ async def get_session(
     )
 
 
+@router.delete("/session/{session_id}", status_code=204)
+async def delete_session(
+    session_id: UUID,
+    user_id: UUID = Depends(get_current_user_id),
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """Delete a practice session and its associated job entry."""
+    row = await conn.fetchrow(
+        "SELECT resume_url FROM practice_sessions WHERE id = $1 AND user_id = $2",
+        session_id,
+        user_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    # Delete from DB (cascade should handle related rows)
+    await conn.execute(
+        "DELETE FROM practice_sessions WHERE id = $1 AND user_id = $2",
+        session_id,
+        user_id,
+    )
+
+    # Best-effort cleanup of uploaded files
+    try:
+        file_path = row["resume_url"]
+        if file_path and os.path.exists(file_path):
+            session_dir = os.path.dirname(file_path)
+            import shutil
+            shutil.rmtree(session_dir, ignore_errors=True)
+    except Exception as exc:
+        logger.warning("Could not clean up session files for %s: %s", session_id, exc)
+
+
 @router.get("/session/{session_id}/resume")
+
 async def get_session_resume(
     session_id: UUID,
     user_id: UUID = Depends(get_current_user_id),
@@ -320,11 +354,11 @@ async def initialize_session(
         else:
             final_jd_text = jd_text or ""
             
-        if not final_jd_text.strip():
-            raise ValueError("Job description is empty.")
+        if len(final_jd_text.strip()) < 100:
+            raise ValueError("Job description is too short or could not be parsed. (LinkedIn URLs are usually blocked, please copy-paste the text instead).")
     except Exception as exc:
         logger.error("Error extracting JD: %s", exc)
-        raise HTTPException(status_code=400, detail=f"Failed to process job description: {exc}")
+        raise HTTPException(status_code=400, detail=str(exc))
 
     # --- File I/O (must succeed before any DB writes) ---
     try:
@@ -335,6 +369,15 @@ async def initialize_session(
     except OSError as exc:
         logger.error("Filesystem error writing resume: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to save uploaded file.") from exc
+
+    # Synchronously extract resume text to ensure it is valid
+    try:
+        resume_text = await extract_resume_text(file_path)
+        if len(resume_text.strip()) < 50:
+            raise ValueError("Resume text is empty or could not be parsed. Please upload a valid text-based PDF or DOCX.")
+    except Exception as exc:
+        logger.error("Error extracting Resume: %s", exc)
+        raise HTTPException(status_code=400, detail=str(exc))
 
     # --- Database writes (single transaction) ---
     try:
@@ -366,7 +409,15 @@ async def initialize_session(
         raise HTTPException(status_code=500, detail="Database error during session initialization.") from exc
 
     # --- Schedule background pipeline (after commit) ---
-    background_tasks.add_task(process_session_background, session_id, job_id, file_path, request.app.state.db_pool)
+    background_tasks.add_task(
+        process_session_background,
+        session_id,
+        job_id,
+        file_path,
+        request.app.state.db_pool,
+        resume_text,       # pre-extracted — skip re-read in background
+        final_jd_text,     # pre-extracted — skip DB round-trip in background
+    )
 
     return InitializeSessionResponse(
         session_id=session_id,

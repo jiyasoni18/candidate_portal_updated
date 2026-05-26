@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 def _build_prompt() -> str:  # kept for background_pipeline shim compatibility
     return (
         "You are an expert technical interviewer and resume analyst.\n"
-        'You will receive a JSON object with two keys: "resume" (parsed resume data) '
+        'You will receive a JSON object with two keys: "resume_text" (the raw text of the resume) '
         'and "jd_text" (job description text).\n\n'
         'Return ONLY a valid JSON object with exactly one top-level key: '
         '"resume_report". No markdown, no extra keys.\n\n'
@@ -40,10 +40,10 @@ def _build_prompt() -> str:  # kept for background_pipeline shim compatibility
 
 # ── Part B: question generation ───────────────────────────────────────────────
 
-def _build_question_prompt(parsed_resume: ResumeParsedData, jd_text: str) -> str:
+def _build_question_prompt(raw_text: str, jd_text: str) -> str:
     """Format QUESTION_GEN_PROMPT with available data."""
-    # Extract candidate name from parsed resume if available
-    name = parsed_resume.personal_info.name or "there"
+    # Since we use raw_text now, we use a generic placeholder for name
+    name = "Candidate"
 
     # Evaluation parameters derived from the JD — passed as a plain summary
     evaluation_parameters = (
@@ -52,7 +52,7 @@ def _build_question_prompt(parsed_resume: ResumeParsedData, jd_text: str) -> str
     )
 
     return QUESTION_GEN_PROMPT.format(
-        resume=json.dumps(parsed_resume.model_dump(), indent=2),
+        resume=raw_text,
         jd=jd_text,
         evaluation_parameters=evaluation_parameters,
         name=name,
@@ -62,7 +62,7 @@ def _build_question_prompt(parsed_resume: ResumeParsedData, jd_text: str) -> str
 # ── Combined pipeline entry point ─────────────────────────────────────────────
 
 async def analyse_resume_against_jd(
-    parsed_resume: ResumeParsedData,
+    raw_text: str,
     jd_text: str,
 ) -> tuple[ResumeReportData, QuestionArraySchema]:
     """Score the resume against the JD and generate 8 interview questions.
@@ -75,7 +75,7 @@ async def analyse_resume_against_jd(
 
     async def _get_report() -> ResumeReportData:
         user_content = json.dumps({
-            "resume": parsed_resume.model_dump(),
+            "resume_text": raw_text,
             "jd_text": jd_text,
         })
         raw_json = await call_openrouter(_build_prompt(), user_content)
@@ -83,7 +83,7 @@ async def analyse_resume_against_jd(
         return ResumeReportData.model_validate(data["resume_report"])
 
     async def _get_questions() -> QuestionArraySchema:
-        prompt = _build_question_prompt(parsed_resume, jd_text)
+        prompt = _build_question_prompt(raw_text, jd_text)
         # QUESTION_GEN_PROMPT is a user-only prompt — pass as user content with empty system
         raw_json = await call_openrouter("", prompt)
         data = json.loads(raw_json)

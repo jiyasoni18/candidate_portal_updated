@@ -246,14 +246,21 @@ export default function NewSessionModal({ open, onClose }: NewSessionModalProps)
             )}
             
             {jdType === "url" && (
-              <input
-                id="jdUrl"
-                type="url"
-                value={jdUrl}
-                onChange={(e) => setJdUrl(e.target.value)}
-                placeholder="https://linkedin.com/jobs/..."
-                className="w-full rounded-lg bg-slate-900 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
+              <div>
+                <input
+                  id="jdUrl"
+                  type="url"
+                  value={jdUrl}
+                  onChange={(e) => setJdUrl(e.target.value)}
+                  placeholder="https://www.jobsite.com/jobs/..."
+                  className="w-full rounded-lg bg-slate-900 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+                {jdUrl.toLowerCase().includes("linkedin.com") && (
+                  <p className="mt-2 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+                    ⚠️ LinkedIn blocks automated access. Please copy-paste the job description text instead using the &quot;Text&quot; option.
+                  </p>
+                )}
+              </div>
             )}
             
             {jdType === "file" && (

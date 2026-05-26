@@ -3,8 +3,91 @@
 import { useState, useEffect, use } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { TrendingUp } from "lucide-react";
 import { fetchSession, refineWithGaps, generatePDF, ApiError } from "@/lib/api";
 import type { SessionDetail } from "@/types/session";
+
+// ── ScoreComparisonBanner ──────────────────────────────────────────────────────
+
+function ScoreGauge({ label, score, projected, color }: { label: string; score: number | null; projected: number; color: string }) {
+  const orig = score ?? 0;
+  const gain = projected - orig;
+  return (
+    <div className="flex-1 min-w-[140px] bg-slate-800/60 border border-slate-700 rounded-xl p-4">
+      <p className="text-zinc-500 text-xs font-semibold uppercase tracking-widest mb-3">{label}</p>
+      <div className="flex items-end gap-3">
+        {/* Original */}
+        <div className="text-center">
+          <div className={`text-3xl font-bold ${orig < 50 ? 'text-red-400' : orig < 70 ? 'text-amber-400' : 'text-emerald-400'}`}>
+            {score !== null ? orig : '—'}
+          </div>
+          <p className="text-zinc-600 text-[10px] mt-1">Original</p>
+        </div>
+        {/* Arrow */}
+        <TrendingUp size={18} className={`mb-2 ${color} shrink-0`} />
+        {/* Projected */}
+        <div className="text-center">
+          <div className={`text-3xl font-bold ${color}`}>{projected}</div>
+          <p className="text-zinc-600 text-[10px] mt-1">Projected</p>
+        </div>
+      </div>
+      {gain > 0 && (
+        <div className={`mt-3 inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full ${color} bg-current/10`}>
+          <span className="opacity-80">↑ +{gain} pts after upgrade</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ScoreComparisonBanner({
+  session,
+  selectedImprovementsCount,
+  addressedGapsCount,
+}: {
+  session: SessionDetail;
+  selectedImprovementsCount: number;
+  addressedGapsCount: number;
+}) {
+  const ea = session.enhanced_analysis;
+  const origMatch = ea?.match_score ?? null;
+  const origAts = ea?.ats_score ?? null;
+
+  const totalImprovements = ea?.improvements?.length || 0;
+  const totalGaps = ea?.gaps?.length || 0;
+
+  // Base bumps just for using the AI formatter (better structure, keyword saturation, enriched summary)
+  const BASE_ATS_BUMP = 5;
+  const BASE_MATCH_BUMP = 8;
+  
+  // Calculate dynamic ATS bump based on selected improvements
+  const atsGain = BASE_ATS_BUMP + (totalImprovements > 0 
+    ? Math.round((selectedImprovementsCount / totalImprovements) * 15) 
+    : 10);
+  
+  // Calculate dynamic Match bump based on addressed gaps
+  const matchGain = BASE_MATCH_BUMP + (totalGaps > 0 
+    ? Math.round((addressedGapsCount / totalGaps) * 15) 
+    : 5);
+
+  // Projected improvements
+  const projMatch = Math.min(100, (origMatch ?? 40) + matchGain);
+  const projAts = Math.min(100, (origAts ?? 55) + atsGain);
+
+  return (
+    <div className="bg-slate-900/80 border border-slate-700/60 rounded-2xl p-5 mb-2 transition-all duration-300">
+      <div className="flex items-center gap-2 mb-4">
+        <TrendingUp size={16} className="text-indigo-400" />
+        <p className="text-zinc-300 text-sm font-semibold">Live Score Projection</p>
+        <span className="text-zinc-600 text-xs ml-1 hidden sm:inline">— dynamically updates as you select improvements and address gaps</span>
+      </div>
+      <div className="flex flex-wrap gap-4">
+        <ScoreGauge label="JD Match Score" score={origMatch} projected={projMatch} color="text-indigo-400" />
+        <ScoreGauge label="ATS Score" score={origAts} projected={projAts} color="text-emerald-400" />
+      </div>
+    </div>
+  );
+}
 
 // ── GapCard ───────────────────────────────────────────────────────────────────
 
@@ -437,6 +520,13 @@ export default function ResumeUpgradeWizardPage({
         </div>
 
         <div className="max-w-3xl mx-auto px-6 py-8 space-y-10">
+          {/* Score comparison banner */}
+          <ScoreComparisonBanner 
+            session={session!} 
+            selectedImprovementsCount={selectedImprovements.size}
+            addressedGapsCount={Object.keys(refinedGaps).filter(key => approvedGaps[key] !== false).length}
+          />
+
           {/* Refined gap paragraphs */}
           {gapEntries.length > 0 && (
             <div>
@@ -537,10 +627,14 @@ export default function ResumeUpgradeWizardPage({
         </button>
       </div>
 
-      {/* Content */}
       <div className="max-w-3xl mx-auto px-6 py-8 space-y-10">
 
-
+        {/* Score comparison banner */}
+        <ScoreComparisonBanner 
+          session={session!} 
+          selectedImprovementsCount={selectedImprovements.size}
+          addressedGapsCount={Object.values(gapNotes).filter(v => v.trim() !== "").length}
+        />
 
         {/* Gaps section */}
         <div>

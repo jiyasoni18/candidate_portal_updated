@@ -70,30 +70,81 @@ async def analyze_ats_score(
 
     today_str = _date.today().strftime("%B %Y")
 
-    prompt = f"""
-You are an expert Applicant Tracking System (ATS) evaluator.
+    prompt = f"""You are an expert Applicant Tracking System (ATS) evaluator.
 The current date is {today_str}.
 
-Analyse the Resume against the Job Description and return ONLY a valid JSON object with these keys:
-- "ats_score": Integer 0-100 — how ATS-friendly the resume is (structure, formatting, keyword density).
-- "ats_explanation": A 2-3 sentence explanation of why the ATS score is what it is, and EXACTLY what the candidate is missing to get this score above 85.
-- "improvements": List of strings — actionable things the candidate must add to fix their ATS score (e.g. terminology improvements, missing standard sections, missing exact keyword matches). Leave EMPTY [] if none apply.
-- "core_strengths": List of 3-5 strings — candidate's strongest qualifications that align with the JD.
-- "summary": 2-3 sentence summary of the candidate's suitability.
+Your job is to simulate how a real ATS parser would score this resume against this specific Job Description (JD).
 
-Rules:
-- "improvements" and any skill gaps must be mutually exclusive.
-- Do not invent metrics or fabricate evidence.
+════════════════════════════════════════════════════════
+STEP 1 — EXTRACT JD REQUIREMENTS (do this first, internally)
+════════════════════════════════════════════════════════
+Read the JD carefully and extract:
+A) REQUIRED KEYWORDS: Every skill, tool, technology, methodology, or qualification the JD explicitly lists as required. Use the EXACT wording from the JD.
+B) PREFERRED/NICE-TO-HAVE KEYWORDS: Any skills listed as "preferred", "nice to have", or "exposure to".
+C) JOB TITLE KEYWORD: The exact job title in the JD (e.g., "Data Scientist").
+D) REQUIRED SECTIONS: Standard resume sections expected by ATS (e.g., Professional Summary, Technical Skills, Education, Experience/Projects).
+
+════════════════════════════════════════════════════════
+STEP 2 — SCORE THE RESUME (4 components, sum = 100)
+════════════════════════════════════════════════════════
+
+COMPONENT 1 — REQUIRED KEYWORD MATCH (50 points max):
+For each required keyword from Step 1A, check if the resume contains it (or a close synonym that an ATS would accept).
+- Exact match = 1 point per keyword
+- Close synonym match = 0.5 points per keyword
+- Not found = 0 points
+Score = (total points earned / total required keywords) × 50
+Round to nearest integer.
+
+COMPONENT 2 — PREFERRED KEYWORD MATCH (15 points max):
+Same as Component 1 but for Step 1B preferred keywords.
+Score = (matched preferred keywords / total preferred keywords) × 15
+
+COMPONENT 3 — JOB TITLE / ROLE ALIGNMENT (15 points max):
+- Job title appears verbatim in resume (Professional Summary or headline) → 15 points
+- Job title is partially present or closely mentioned → 8 points
+- Not present at all → 0 points
+
+COMPONENT 4 — RESUME STRUCTURE & ATS PARSABILITY (20 points max):
+Award points for each of the following present and properly formatted:
+- Professional Summary section present → 5 points
+- Technical Skills section with categorized skills → 5 points
+- Education section with degree and institution → 4 points
+- Experience or Projects section with bullet-point achievements → 4 points
+- Contact information (email, phone, or links) → 2 points
+
+ats_score = Component1 + Component2 + Component3 + Component4 (max 100)
+
+════════════════════════════════════════════════════════
+STEP 3 — GENERATE OUTPUT
+════════════════════════════════════════════════════════
+
+Return ONLY a valid JSON object with these exact keys:
+
+- "ats_score": Integer 0-100. Computed from Step 2.
+- "ats_explanation": 2-3 sentences. State the score breakdown (e.g., "Keyword match: X/50, Job title: Y/15, Structure: Z/20") and what specifically is causing points to be lost. Use EXACT JD wording.
+- "improvements": List of strings — STRICTLY ONLY terminology/wording mismatches. Where the candidate HAS the skill but uses different words than the JD uses, causing ATS keyword miss.
+  FORMAT: "Resume uses '[resume wording]' — JD requires '[exact JD term]'. Rephrase to '[exact JD term]' to improve keyword match."
+  DO NOT put missing skills here. If no wording mismatches exist, return [].
+- "core_strengths": List of 3-5 strings — candidate's strongest JD-aligned qualifications. Use the exact JD terminology where possible.
+- "summary": 2-3 sentence overview of suitability for this specific role.
+
+STRICT RULES:
+- All output MUST use the exact terminology from the JD, not generic descriptions.
+- "improvements" = ONLY cases where skill EXISTS in resume but uses WRONG words vs JD. Never use this for missing skills.
+- Do NOT invent metrics or fabricate evidence.
 - Output valid JSON only. No markdown fences.
 
-Job Description:
+════════════════════════════════════════════════════════
+JOB DESCRIPTION:
 {jd_text}
 
-Resume:
+RESUME:
 {resume_text}
+════════════════════════════════════════════════════════
 """
     messages = [{"role": "user", "content": prompt}]
-    result_text = await _call_llm_async(model_name, messages, temperature=0.0, max_tokens=1000)
+    result_text = await _call_llm_async(model_name, messages, temperature=0.0, max_tokens=1500)
     result_text = _strip_markdown_json(result_text)
     return json.loads(result_text)
 
@@ -389,6 +440,14 @@ b) For all other sections (CERTIFICATIONS, ACHIEVEMENTS, ADDITIONAL_SECTIONS, PR
 c) In the EDUCATION section, the "heading" field must be plain text (e.g. "MBA in Human Resources | Gujarat Technological University | 2023 - 2025"). If the original resume includes a percentage or CGPA (e.g. "8.5 CGPA", "85%"), you MUST include it as a bullet inside that education item's "bullets" array.
 d) Never output empty arrays as section placeholders — if a section has no real content from the original resume, omit it entirely.
 
+⚡ ATS SCORE IMPROVEMENT RULES (MANDATORY — These directly raise the ATS score):
+ATS-1. KEYWORD SATURATION: Extract ALL important keywords, skills, and technologies from the JD. Every keyword that is already present in the resume MUST appear at least once in the Technical Skills section, PLUS be woven naturally into the Professional Summary. Do NOT keyword-stuff bullet points — place keywords in Skills and Summary.
+ATS-2. TECHNICAL SKILLS ENRICHMENT: Scan the JD for every technology, tool, library, or methodology mentioned. If the candidate's original resume shows evidence of that skill anywhere (in projects, experience, certifications, or coursework), ADD it to the TECHNICAL SKILLS section even if it was not there before. You are allowed to add skills to the skills section if they are verifiably evidenced elsewhere in the resume.
+ATS-3. JD TITLE IN SUMMARY: The PROFESSIONAL SUMMARY MUST contain the exact job title from the JD (e.g., "Data Scientist", "Software Engineer") within the first sentence. ATS parsers check for this.
+ATS-4. ACTION VERBS: Start every bullet point with a strong, JD-relevant action verb (Developed, Implemented, Designed, Engineered, Analyzed, Optimized, Built, Deployed, Architected, Leveraged).
+ATS-5. SECTION HEADERS: Use EXACT standard ATS section titles: "PROFESSIONAL SUMMARY", "PROFESSIONAL EXPERIENCE" or "TRAINING EXPERIENCE", "TECHNICAL SKILLS", "EDUCATION", "PROJECTS", "CERTIFICATIONS".
+ATS-6. SKILLS FORMAT: In the TECHNICAL SKILLS section, format as "Category: Skill1, Skill2, Skill3" on separate lines. Add JD-relevant skills the candidate demonstrably has based on their project/experience evidence.
+
 Instructions:
 1. Integrate all refined gap content EXCLUSIVELY into the PROFESSIONAL SUMMARY section. DO NOT add them as new bullet points in the Projects or Professional Experience sections. If the user doesn't have a Professional Summary, create one and put the gaps there.
 2. Apply terminology improvements by replacing original phrasing with exact JD keywords specifically in the Technical Skills, Experience, or Projects sections where they belong. Do not just dump them in the summary; optionally keep original tech in brackets (e.g., "Python (Pandas)").
@@ -397,10 +456,9 @@ Instructions:
 5. Keep bullet points concise, start with strong action verbs, and quantify only when data exists in the original resume or user input. DO NOT use bold or markdown formatting (like **bold**) within the text of any section, especially custom additions. For certificates, simply list the name and agency/score without adding extra verbs like "Completed".
 {page_limit_rule}
 7. Produce clean, professional output that passes ATS keyword scanning for the provided JD without keyword stuffing or repetitive phrasing.
-8. Do NOT add new sections, skills, experiences, or bullets unless they come from Refined Gap Content or Custom Additions. (Exception: You MUST generate a Professional Summary if missing). Preserve all original sections exactly as they appear.
+8. Do NOT add new job experiences, companies, dates, or achievements unless they come from Refined Gap Content or Custom Additions. (Exception 1: You MUST generate a Professional Summary if missing). (Exception 2: Per ATS-2, you MAY enrich the TECHNICAL SKILLS section with JD-relevant skills that are verifiably evidenced in the candidate's existing projects, coursework, or certifications).
 9. HYPERLINKS & BACKLINKING: You MUST preserve ALL hyperlinks/URLs from the original resume and Custom Additions. Format them EXACTLY as HTML tags in your JSON output like this: <a href="URL" color="blue">Link Text</a>. You must do this for the contact header (e.g., <a href="URL" color="blue">LinkedIn</a>) and any project links. Do NOT strip URLs.
 10. CONTACT HEADER FORMATTING: In the "contact" string of the header, you MUST separate each item (phone, email, links) with a " | " character with spaces around it. E.g., "phone | email | <a href...>LinkedIn</a> | <a href...>GitHub</a>".
-11. CERTIFICATIONS FORMATTING: For the CERTIFICATIONS section, you MUST use the "bullets" type (not "items"), so the certificates are rendered as a simple bulleted list in normal text, rather than bold headings.
 
 Output JSON with sections in this order (PROFESSIONAL SUMMARY is mandatory, ONLY include other sections if they exist in the original resume or are explicitly requested via Custom Additions): PROFESSIONAL SUMMARY, EDUCATION, PROFESSIONAL EXPERIENCE (if any), TECHNICAL SKILLS, PROJECTS (if present), CERTIFICATIONS (if present), ACHIEVEMENTS (if present), then any other original sections. Return ONLY valid JSON (no markdown, no commentary):
 {{
@@ -505,6 +563,21 @@ Output JSON with sections in this order (PROFESSIONAL SUMMARY is mandatory, ONLY
         }
         for k, v in replacements.items():
             text = text.replace(k, v)
+            
+        import re
+        # 1. Convert markdown links to html links: [text](URL) -> <a href="URL">text</a>
+        text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', text)
+        
+        # 2. Escape lone ampersands (but not if they are part of &amp; or &lt; etc)
+        text = re.sub(r'&(?!(amp|lt|gt|quot|apos);)', '&amp;', text)
+        
+        # 3. Convert all <a> tags to ReportLab <link> with explicit blue color and underline
+        # e.g. <a href="URL" color="blue">text</a> -> <font color="#005b96"><u><link href="URL">text</link></u></font>
+        text = re.sub(
+            r'<a[^>]*href=[\'"]([^\'"]+)[\'"][^>]*>(.*?)</a>', 
+            r'<font color="#005b96"><u><link href="\1">\2</link></u></font>', 
+            text
+        )
         return text
     
     def sanitize_json(data):
