@@ -609,8 +609,8 @@ Return ONLY a valid JSON object. No markdown, no explanation outside the JSON.
 
   Sources to check — use exact JD wording for each:
 
-  1. SKILL GAPS (from Section 2): Every mandatory skill rated ABSENT or PRESENT+WEAK.
-     Copy the EXACT skill name/phrase from the JD's Required Skills section.
+  1. SKILL GAPS (from Section 2 & 3): Every mandatory OR good-to-have skill rated ABSENT, PRESENT+WEAK, or NOT FOUND.
+     Copy the EXACT skill name/phrase from the JD's Required or Preferred Skills section.
      Format: '[Exact JD skill phrase]: [resume evidence or lack thereof] — [Actionable fix with JD keywords to boost score above 85]'
 
   2. EXPERIENCE GAPS (from Gate 2 + Section 1): If E < R, state it.
@@ -634,7 +634,7 @@ Return ONLY a valid JSON object. No markdown, no explanation outside the JSON.
   CRITICAL RULES:
   - Use EXACT phrases from the JD — do not rephrase or generalize
   - If a section has NO gap, skip it entirely
-  - Maximum 8 gaps — most critical first
+  - List ALL gaps (do not limit the number) — ensure even small missing requirements from the JD are captured.
   - If no gaps at all: return exactly ['No gaps identified — candidate meets all requirements']>"
 ],
 "summary": "<3–5 sentences. Specific and honest. Use exact JD skill names when naming strengths or missing areas. State the score and key reasons. Do not be generic.>"

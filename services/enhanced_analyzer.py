@@ -125,13 +125,15 @@ Return ONLY a valid JSON object with these exact keys:
 - "ats_explanation": 2-3 sentences. State the score breakdown (e.g., "Keyword match: X/50, Job title: Y/15, Structure: Z/20") and what specifically is causing points to be lost. Use EXACT JD wording.
 - "improvements": List of strings — STRICTLY ONLY terminology/wording mismatches. Where the candidate HAS the skill but uses different words than the JD uses, causing ATS keyword miss.
   FORMAT: "Resume uses '[resume wording]' — JD requires '[exact JD term]'. Rephrase to '[exact JD term]' to improve keyword match."
-  DO NOT put missing skills here. If no wording mismatches exist, return [].
+  DO NOT put missing skills here. If no wording mismatches exist, return []. List ALL terminology mismatches; do not limit the number.
 - "core_strengths": List of 3-5 strings — candidate's strongest JD-aligned qualifications. Use the exact JD terminology where possible.
 - "summary": 2-3 sentence overview of suitability for this specific role.
 
 STRICT RULES:
 - All output MUST use the exact terminology from the JD, not generic descriptions.
 - "improvements" = ONLY cases where skill EXISTS in resume but uses WRONG words vs JD. Never use this for missing skills.
+- DO NOT INCLUDE EXACT MATCHES in improvements. If the resume already uses the exact JD term (e.g. "Linear Regression" -> "Linear Regression"), it is NOT an improvement. DO NOT INCLUDE IT.
+- DO NOT MAP UNRELATED CONCEPTS in improvements (e.g. do not map "workflow automation" to "Learning & Development"). Only map actual synonymous terms.
 - Do NOT invent metrics or fabricate evidence.
 - Output valid JSON only. No markdown fences.
 
@@ -209,6 +211,12 @@ async def analyze_jd_match(
     result_text = _strip_markdown_json(result_text)
     return json.loads(result_text)
 
+import hashlib
+import collections
+
+# LRU Cache for analyses to prevent memory leak in production
+MAX_CACHE_SIZE = 100
+_analysis_cache = collections.OrderedDict()
 
 # Keep backward-compat alias — orchestrator currently calls this name
 async def analyze_resume_enhanced(
@@ -225,6 +233,13 @@ async def analyze_resume_enhanced(
       From Match: score (match_score), section_scores, section_reasons,
                   mandatory_skills_check, good_to_have_check, gaps, flags
     """
+    # Use a deterministic hash cache for exact same inputs to prevent score fluctuation
+    cache_key = hashlib.sha256(f"{resume_text.strip()}|{jd_text.strip()}|{model_name}".encode('utf-8')).hexdigest()
+    if cache_key in _analysis_cache:
+        import copy
+        _analysis_cache.move_to_end(cache_key) # Mark as most recently used
+        return copy.deepcopy(_analysis_cache[cache_key])
+
     import asyncio
 
     ats_result, match_result = await asyncio.gather(
@@ -264,6 +279,12 @@ async def analyze_resume_enhanced(
         merged["strengths"] = match_result.get("strengths", merged.get("core_strengths", []))
         merged["flags"] = match_result.get("flags", {})
         merged["dropped"] = match_result.get("dropped", False)
+
+    import copy
+    _analysis_cache[cache_key] = copy.deepcopy(merged)
+    # Evict oldest if we exceed capacity
+    if len(_analysis_cache) > MAX_CACHE_SIZE:
+        _analysis_cache.popitem(last=False)
 
     return merged
 
@@ -449,7 +470,7 @@ ATS-5. SECTION HEADERS: Use EXACT standard ATS section titles: "PROFESSIONAL SUM
 ATS-6. SKILLS FORMAT: In the TECHNICAL SKILLS section, format as "Category: Skill1, Skill2, Skill3" on separate lines. Add JD-relevant skills the candidate demonstrably has based on their project/experience evidence.
 
 Instructions:
-1. Integrate all refined gap content EXCLUSIVELY into the PROFESSIONAL SUMMARY section. DO NOT add them as new bullet points in the Projects or Professional Experience sections. If the user doesn't have a Professional Summary, create one and put the gaps there.
+1. Integrate all refined gap content logically into the candidate's existing PROFESSIONAL EXPERIENCE or PROJECTS sections as new bullet points. The skills must be attached to real work history to pass ATS context checks. If the gap content cannot logically fit into existing roles, only then add it to the PROFESSIONAL SUMMARY.
 2. Apply terminology improvements by replacing original phrasing with exact JD keywords specifically in the Technical Skills, Experience, or Projects sections where they belong. Do not just dump them in the summary; optionally keep original tech in brackets (e.g., "Python (Pandas)").
 3. For Custom Additions: if the user explicitly prefixes an addition with a section name (e.g., 'certificate:', 'education:', 'project:'), you MUST create that section if it does not exist (e.g., CERTIFICATIONS, EDUCATION, PROJECTS) and place the item there. Do NOT put certificates, education, or projects into the Professional Summary. If a line is prefixed with 'about me:' or 'professional summary:' (case-insensitive), treat that content as the professional summary material and merge it into the PROFESSIONAL SUMMARY section — do NOT place it in any other section. If no prefix is given, incorporate it into the most logical section.
 4. STRICT RULE: NEVER fabricate dates, years, companies, percentages, or ANY numerical metrics. You are STRICTLY FORBIDDEN from mentioning any numerical values in the updated resume unless they are explicitly present in the Original Resume or explicitly provided by the user in the Custom Additions/Gaps. Preserve any percentage or CGPA values present in the Education section.
