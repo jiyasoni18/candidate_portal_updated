@@ -56,19 +56,27 @@ function ScoreComparisonBanner({
   const totalImprovements = ea?.improvements?.length || 0;
   const totalGaps = ea?.gaps?.length || 0;
 
-  // Base bumps just for using the AI formatter (better structure, keyword saturation, enriched summary)
-  const BASE_ATS_BUMP = 5;
-  const BASE_MATCH_BUMP = 8;
+  // Base bumps for using the AI formatter (better structure, action verbs, keyword saturation)
+  // Ensure a minimum 10 point jump (bounded by 100) just for the baseline formatting improvements.
+  const BASE_ATS_BUMP = Math.min(10, 100 - (origAts ?? 0));
+  const BASE_MATCH_BUMP = Math.min(10, 100 - (origMatch ?? 0));
   
-  // Calculate dynamic ATS bump based on selected improvements
+  // Calculate proportional point recovery based on actual missing score rather than arbitrary fixed targets.
+  // We assume addressing terminology recovers up to 85% of missing ATS points.
+  const missingAts = Math.max(0, 100 - (origAts ?? 0) - BASE_ATS_BUMP);
+  const atsRecoveryPotential = Math.floor(missingAts * 0.85);
+  
   const atsGain = BASE_ATS_BUMP + (totalImprovements > 0 
-    ? Math.round((selectedImprovementsCount / totalImprovements) * 15) 
-    : 10);
+    ? Math.round((selectedImprovementsCount / totalImprovements) * atsRecoveryPotential) 
+    : 0);
   
-  // Calculate dynamic Match bump based on addressed gaps
+  // We assume addressing gaps recovers up to 85% of missing Match points.
+  const missingMatch = Math.max(0, 100 - (origMatch ?? 0) - BASE_MATCH_BUMP);
+  const matchRecoveryPotential = Math.floor(missingMatch * 0.85);
+
   const matchGain = BASE_MATCH_BUMP + (totalGaps > 0 
-    ? Math.round((addressedGapsCount / totalGaps) * 15) 
-    : 5);
+    ? Math.round((addressedGapsCount / totalGaps) * matchRecoveryPotential) 
+    : 0);
 
   // Projected improvements
   const projMatch = Math.min(100, (origMatch ?? 40) + matchGain);
