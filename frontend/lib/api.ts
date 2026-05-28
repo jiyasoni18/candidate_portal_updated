@@ -117,7 +117,13 @@ export async function refineWithGaps(
   customAdditions: string,
   gapSelections: Record<string, string>,
   selectedImprovements: string[],
-  preRefined?: boolean
+  preRefined?: boolean,
+  optimizeFlags?: {
+    projects: boolean;
+    experience: boolean;
+    summary: boolean;
+  },
+  targetedAnswers?: Record<string, string>
 ): Promise<RefineResponse> {
   const res = await fetch(`${API_BASE}/practice/session/${sessionId}/refine`, {
     method: "POST",
@@ -130,6 +136,12 @@ export async function refineWithGaps(
       gap_selections: gapSelections,
       selected_improvements: selectedImprovements,
       ...(preRefined ? { pre_refined: true } : {}),
+      ...(optimizeFlags ? {
+        optimize_projects: optimizeFlags.projects,
+        optimize_experience: optimizeFlags.experience,
+        optimize_summary: optimizeFlags.summary
+      } : {}),
+      ...(targetedAnswers ? { targeted_answers: targetedAnswers } : {})
     }),
   });
   return handleResponse<RefineResponse>(res);
@@ -199,4 +211,21 @@ export async function downloadResume(sessionId: string): Promise<void> {
   // but this is called in an onClick handler, so it should be fine.
   a.click();
   window.URL.revokeObjectURL(url);
+}
+
+export async function reanalyzeGaps(
+  sessionId: string,
+  customAdditions: string,
+): Promise<{ remaining_gaps: string[] }> {
+  const res = await fetch(`${API_BASE}/practice/session/${sessionId}/reanalyze_gaps`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(),
+    },
+    body: JSON.stringify({
+      custom_additions: customAdditions,
+    }),
+  });
+  return handleResponse<{ remaining_gaps: string[] }>(res);
 }

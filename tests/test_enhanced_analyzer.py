@@ -7,7 +7,8 @@ Tests cover:
 - Requirements: 1.1, 3.1, 4.1
 """
 import json
-from unittest.mock import AsyncMock, patch
+from io import BytesIO
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -140,19 +141,33 @@ Additional note about my experience"""
 @pytest.mark.asyncio
 async def test_analyze_resume_enhanced_success():
     """Test successful enhanced analysis with valid resume and JD."""
-    mock_response = json.dumps({
-        "match_score": 85,
+    mock_ats_response = json.dumps({
         "is_match": True,
         "ats_score": 78,
         "ats_explanation": "Good structure and keyword usage.",
-        "gaps": ["No Kubernetes experience"],
         "improvements": ["Consider using 'Kubernetes' instead of 'container orchestration'"],
         "core_strengths": ["Strong Python background", "FastAPI experience"],
         "summary": "Good fit for the role with strong technical skills.",
         "explanation": "Score calculated based on experience and skills alignment."
     })
+    mock_match_response = json.dumps({
+        "score": 85,
+        "gaps": ["No Kubernetes experience"],
+        "section_scores": {},
+        "section_reasons": {},
+        "mandatory_skills_check": [],
+        "good_to_have_check": [],
+        "strengths": ["Strong Python background", "FastAPI experience"],
+        "flags": {}
+    })
 
-    with patch("services.enhanced_analyzer._call_llm_async", AsyncMock(return_value=mock_response)):
+    async def side_effect(model, messages, **kwargs):
+        prompt_text = messages[0]["content"]
+        if "Primary Skill Fit" in prompt_text or "holistic" in prompt_text or "weight" in prompt_text.lower():
+            return mock_match_response
+        return mock_ats_response
+
+    with patch("services.enhanced_analyzer._call_llm_async", side_effect):
         result = await analyze_resume_enhanced(SAMPLE_RESUME, SAMPLE_JD)
 
         assert result["match_score"] == 85
@@ -166,19 +181,31 @@ async def test_analyze_resume_enhanced_success():
 @pytest.mark.asyncio
 async def test_analyze_resume_enhanced_with_markdown_fences():
     """Test that markdown JSON fences are properly stripped."""
-    mock_response = "```json\n" + json.dumps({
-        "match_score": 90,
-        "is_match": True,
+    mock_ats_response = "```json\n" + json.dumps({
         "ats_score": 85,
         "ats_explanation": "Excellent ATS optimization.",
-        "gaps": [],
         "improvements": [],
         "core_strengths": ["Strong background"],
-        "summary": "Excellent candidate.",
-        "explanation": "Well aligned."
+        "summary": "Excellent candidate."
+    }) + "\n```"
+    mock_match_response = "```json\n" + json.dumps({
+        "score": 90,
+        "gaps": [],
+        "section_scores": {},
+        "section_reasons": {},
+        "mandatory_skills_check": [],
+        "good_to_have_check": [],
+        "strengths": ["Strong background"],
+        "flags": {}
     }) + "\n```"
 
-    with patch("services.enhanced_analyzer._call_llm_async", AsyncMock(return_value=mock_response)):
+    async def side_effect(model, messages, **kwargs):
+        prompt_text = messages[0]["content"]
+        if "Primary Skill Fit" in prompt_text or "holistic" in prompt_text or "weight" in prompt_text.lower():
+            return mock_match_response
+        return mock_ats_response
+
+    with patch("services.enhanced_analyzer._call_llm_async", side_effect):
         result = await analyze_resume_enhanced(SAMPLE_RESUME, SAMPLE_JD)
         assert result["match_score"] == 90
 
@@ -186,24 +213,37 @@ async def test_analyze_resume_enhanced_with_markdown_fences():
 @pytest.mark.asyncio
 async def test_analyze_resume_enhanced_custom_model():
     """Test using a custom model name."""
-    mock_response = json.dumps({
-        "match_score": 75,
-        "is_match": True,
+    mock_ats_response = json.dumps({
         "ats_score": 70,
         "ats_explanation": "Good score.",
-        "gaps": [],
         "improvements": [],
         "core_strengths": [],
-        "summary": "Summary.",
-        "explanation": "Explanation."
+        "summary": "Summary."
+    })
+    mock_match_response = json.dumps({
+        "score": 75,
+        "gaps": [],
+        "section_scores": {},
+        "section_reasons": {},
+        "mandatory_skills_check": [],
+        "good_to_have_check": [],
+        "strengths": [],
+        "flags": {}
     })
 
-    with patch("services.enhanced_analyzer._call_llm_async", AsyncMock(return_value=mock_response)) as mock_call:
+    async def side_effect(model, messages, **kwargs):
+        prompt_text = messages[0]["content"]
+        if "Primary Skill Fit" in prompt_text or "holistic" in prompt_text or "weight" in prompt_text.lower():
+            return mock_match_response
+        return mock_ats_response
+
+    mock_call = AsyncMock(side_effect=side_effect)
+
+    with patch("services.enhanced_analyzer._call_llm_async", mock_call):
         await analyze_resume_enhanced(SAMPLE_RESUME, SAMPLE_JD, None, "custom/model")
-        mock_call.assert_called_once()
-        # Verify the model name was used (passed as first positional arg)
-        call_args = mock_call.call_args
-        assert call_args[0][0] == "custom/model"
+        assert mock_call.call_count == 2
+        assert mock_call.call_args_list[0][0][0] == "custom/model"
+        assert mock_call.call_args_list[1][0][0] == "custom/model"
 
 
 # ---------------------------------------------------------------------------

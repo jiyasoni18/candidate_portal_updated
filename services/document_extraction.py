@@ -27,17 +27,94 @@ async def extract_resume_text(file_path: str) -> str:
     return await extract_pdf_text(file_path)
 
 async def extract_pdf_text(file_path: str) -> str:
-    """Open a PDF and return all page text concatenated, capped at 25,000 chars."""
+    """Open a PDF and return all page text concatenated with inline markdown links, capped at 25,000 chars."""
     def _extract() -> str:
         doc = fitz.open(file_path)
         text_parts = []
         for page in doc:
-            text_parts.append(page.get_text())
-            for link in page.get_links():
-                if "uri" in link:
-                    text_parts.append(f"\n[URL found: {link['uri']}]")
+            links = page.get_links()
+            words = page.get_text("words")  # list of (x0, y0, x1, y1, "word", block_no, line_no, word_no)
+            
+            # Sort words in reading order
+            words.sort(key=lambda w: (w[5], w[6], w[7]))
+            
+            # Helper to check if a point is inside a rect
+            def is_point_in_rect(px, py, rect):
+                return rect[0] <= px <= rect[2] and rect[1] <= py <= rect[3]
+                
+            # Map each word to a link if it falls inside
+            word_links = []
+            for w in words:
+                center_x = (w[0] + w[2]) / 2.0
+                center_y = (w[1] + w[3]) / 2.0
+                
+                matched_uri = None
+                for link in links:
+                    rect = link.get("from")
+                    if rect and is_point_in_rect(center_x, center_y, rect):
+                        matched_uri = link.get("uri")
+                        break
+                word_links.append((w, matched_uri))
+                
+            # Group words by block/line and reconstruct text
+            current_block = -1
+            current_line = -1
+            
+            line_parts = []
+            page_lines = []
+            
+            i = 0
+            n = len(word_links)
+            while i < n:
+                w, uri = word_links[i]
+                block_no = w[5]
+                line_no = w[6]
+                
+                if block_no != current_block or line_no != current_line:
+                    if line_parts:
+                        page_lines.append(" ".join(line_parts))
+                        line_parts = []
+                    # If block changes, add an extra newline for block separation
+                    if block_no != current_block and current_block != -1:
+                        page_lines.append("")
+                    current_block = block_no
+                    current_line = line_no
+                    
+                if uri:
+                    # Group all consecutive words sharing this exact link uri on the same line
+                    link_words = [w[4]]
+                    j = i + 1
+                    while j < n:
+                        next_w, next_uri = word_links[j]
+                        if next_uri == uri and next_w[5] == block_no and next_w[6] == line_no:
+                            link_words.append(next_w[4])
+                            j += 1
+                        else:
+                            break
+                    link_text = " ".join(link_words)
+                    line_parts.append(f"[{link_text}]({uri})")
+                    i = j  # advance
+                else:
+                    line_parts.append(w[4])
+                    i += 1
+                    
+            if line_parts:
+                page_lines.append(" ".join(line_parts))
+                
+            # Also keep a fallback list of any URLs at the end of the page to ensure they are never lost
+            fallback_urls = []
+            for link in links:
+                if "uri" in link and link["uri"] not in fallback_urls:
+                    fallback_urls.append(link["uri"])
+            if fallback_urls:
+                page_lines.append("")
+                for furl in fallback_urls:
+                    page_lines.append(f"[URL found: {furl}]")
+                    
+            text_parts.append("\n".join(page_lines))
+            
         doc.close()
-        text = "".join(text_parts)
+        text = "\n\n".join(text_parts)
         return text[:_MAX_TEXT_CHARS]
     return await asyncio.to_thread(_extract)
 

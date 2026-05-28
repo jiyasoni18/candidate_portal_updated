@@ -97,11 +97,21 @@ class InitializeSessionRequest(BaseModel):
     pre_refined: Optional[bool] = False
 
 
+class ReanalyzeGapsRequest(BaseModel):
+    custom_additions: str
+
+class ReanalyzeGapsResponse(BaseModel):
+    remaining_gaps: List[str]
+
 class RefineCustomAdditionsRequest(BaseModel):
     custom_additions: str
     gap_selections: Optional[Dict[str, str]] = None
     selected_improvements: Optional[List[str]] = None
     pre_refined: Optional[bool] = False
+    optimize_projects: Optional[bool] = False
+    optimize_experience: Optional[bool] = False
+    optimize_summary: Optional[bool] = False
+    targeted_answers: Optional[Dict[str, str]] = None
 
 
 class RefineCustomAdditionsResponse(BaseModel):
@@ -183,6 +193,43 @@ async def list_sessions(
 _ACTIVE_STATUSES = {"ready_to_start", "interviewing", "completed", "interview_processing"}
 
 
+async def _ensure_existing_entities(
+    conn: asyncpg.Connection,
+    session_id: UUID,
+    enhanced_analysis: dict,
+    resume_parsed_json: str,
+) -> dict:
+    if enhanced_analysis is None:
+        enhanced_analysis = {}
+    if not enhanced_analysis.get("existing_entities"):
+        try:
+            resume_parsed = json.loads(resume_parsed_json) if isinstance(resume_parsed_json, str) else resume_parsed_json
+        except Exception:
+            resume_parsed = None
+            
+        if resume_parsed and isinstance(resume_parsed, dict):
+            entities = []
+            for p in resume_parsed.get("projects", []):
+                if isinstance(p, dict) and p.get("name"):
+                    name = p["name"].strip()
+                    if name:
+                        entities.append(f"Project: {name}")
+            for e in resume_parsed.get("experience", []):
+                if isinstance(e, dict) and e.get("company"):
+                    comp = e["company"].strip()
+                    if comp:
+                        entities.append(f"Company: {comp}")
+            if entities:
+                enhanced_analysis["existing_entities"] = entities
+                # Save to database
+                await conn.execute(
+                    "UPDATE practice_sessions SET enhanced_analysis = $1::jsonb WHERE id = $2",
+                    json.dumps(enhanced_analysis),
+                    session_id,
+                )
+    return enhanced_analysis
+
+
 @router.get("/session/{session_id}", response_model=SessionDetailResponse)
 async def get_session(
     session_id: UUID,
@@ -205,6 +252,7 @@ async def get_session(
                 ps.generated_questions,
                 ps.interview_assessment,
                 ps.enhanced_analysis,
+                ps.resume_parsed,
                 ps.transcript,
                 pj.id                AS job_id,
                 pj.title             AS job_title,
@@ -239,6 +287,15 @@ async def get_session(
     if isinstance(raw_questions, dict) and "questions" in raw_questions:
         raw_questions = raw_questions["questions"]
 
+    enhanced_analysis = _parse_json(row["enhanced_analysis"])
+    if enhanced_analysis is not None:
+        enhanced_analysis = await _ensure_existing_entities(
+            conn,
+            row["session_id"],
+            enhanced_analysis,
+            row["resume_parsed"]
+        )
+
     return SessionDetailResponse(
         session_id=row["session_id"],
         status=row["status"],
@@ -251,7 +308,7 @@ async def get_session(
         resume_report=_parse_json(row["resume_report"]) if expose_results else None,
         generated_questions=raw_questions if expose_results else None,
         interview_assessment=_parse_json(row["interview_assessment"]) if row["status"] == "completed" else None,
-        enhanced_analysis=_parse_json(row["enhanced_analysis"]),
+        enhanced_analysis=enhanced_analysis,
         transcript=_parse_json(row["transcript"]) if row["status"] == "completed" else None,
     )
 
@@ -621,6 +678,72 @@ async def session_complete(
 
 
 # ---------------------------------------------------------------------------
+# 5.4.5 POST /practice/session/{session_id}/reanalyze_gaps endpoint
+# ---------------------------------------------------------------------------
+
+@router.post("/session/{session_id}/reanalyze_gaps", response_model=ReanalyzeGapsResponse)
+async def reanalyze_gaps_endpoint(
+    session_id: UUID,
+    request: ReanalyzeGapsRequest,
+    user_id: UUID = Depends(get_current_user_id),
+    conn: asyncpg.Connection = Depends(get_db),
+) -> ReanalyzeGapsResponse:
+    """Re-analyze missing skills based on newly added experiences and projects."""
+    try:
+        row = await conn.fetchrow(
+            """
+            SELECT
+                ps.resume_url,
+                ps.enhanced_analysis,
+                pj.description AS job_description
+            FROM practice_sessions ps
+            INNER JOIN practice_jobs pj ON ps.job_id = pj.id
+            WHERE ps.id = $1 AND ps.user_id = $2
+            """,
+            session_id,
+            user_id,
+        )
+    except asyncpg.PostgresError as exc:
+        logger.error("DB error fetching session %s: %s", session_id, exc)
+        raise HTTPException(status_code=500, detail="Database error.") from exc
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    try:
+        from services.document_extraction import extract_resume_text
+        resume_text = await extract_resume_text(row["resume_url"])
+    except Exception as exc:
+        logger.error("Failed to extract resume for %s: %s", session_id, exc)
+        raise HTTPException(status_code=500, detail="Failed to read resume.") from exc
+
+    def _parse_json(val):
+        if val is None: return None
+        import json
+        return json.loads(val) if isinstance(val, str) else val
+
+    enhanced_analysis = _parse_json(row["enhanced_analysis"]) or {}
+    original_gaps = enhanced_analysis.get("gaps", [])
+    
+    # Convert gaps to text format with indices for LLM
+    original_gaps_text = "\n".join([f"Gap {i}: {gap}" for i, gap in enumerate(original_gaps)]) if original_gaps else "None"
+
+    from services.enhanced_analyzer import reanalyze_gaps
+    try:
+        remaining_gaps = await reanalyze_gaps(
+            resume_text=resume_text,
+            jd_text=row["job_description"],
+            custom_additions=request.custom_additions,
+            original_gaps_text=original_gaps_text,
+        )
+    except Exception as exc:
+        logger.error("Failed to reanalyze gaps for %s: %s", session_id, exc)
+        raise HTTPException(status_code=500, detail="Failed to reanalyze gaps.") from exc
+
+    return ReanalyzeGapsResponse(remaining_gaps=remaining_gaps)
+
+
+# ---------------------------------------------------------------------------
 # 5.5 POST /practice/session/{session_id}/refine endpoint
 # ---------------------------------------------------------------------------
 
@@ -647,6 +770,8 @@ async def refine_custom_additions_endpoint(
                 ps.status,
                 ps.enhanced_analysis,
                 ps.custom_additions,
+                ps.resume_url,
+                ps.resume_parsed,
                 pj.description       AS job_description
             FROM practice_sessions ps
             INNER JOIN practice_jobs pj ON ps.job_id = pj.id
@@ -673,6 +798,12 @@ async def refine_custom_additions_endpoint(
         return json.loads(val) if isinstance(val, str) else val
 
     enhanced_analysis = _parse_json(row["enhanced_analysis"]) or {}
+    enhanced_analysis = await _ensure_existing_entities(
+        conn,
+        row["session_id"],
+        enhanced_analysis,
+        row["resume_parsed"]
+    )
     job_description = row["job_description"]
 
     # Extract gaps from enhanced analysis if present
@@ -699,24 +830,45 @@ async def refine_custom_additions_endpoint(
             refined_custom_items = [
                 line for line in request.custom_additions.splitlines() if line.strip()
             ]
+        custom_str = request.custom_additions
         refined = {
             "gaps": refined_gaps_map,
             "custom": request.custom_additions,
         }
     else:
-        try:
-            refined = await refine_custom_additions(
-                gaps_data=gaps_data,
-                custom_text=request.custom_additions,
-                jd_text=job_description,
-            )
-        except Exception as exc:
-            logger.error(
-                "Failed to refine custom additions for session %s: %s", session_id, exc
-            )
-            raise HTTPException(
-                status_code=500, detail="Failed to refine custom additions."
-            ) from exc
+        # Only call LLM if there is actually something to refine or optimize
+        has_any_notes = any(note.strip() for note in request.gap_selections.values()) if request.gap_selections else False
+        has_custom = bool(request.custom_additions.strip())
+        has_opts = request.optimize_projects or request.optimize_experience or request.optimize_summary
+        
+        if has_any_notes or has_custom or has_opts:
+            resume_text = ""
+            if has_opts:
+                resume_url = row.get("resume_url")
+                if resume_url and os.path.exists(resume_url):
+                    from services.document_extraction import extract_resume_text
+                    resume_text = await extract_resume_text(resume_url)
+
+            try:
+                refined = await refine_custom_additions(
+                    gaps_data=gaps_data,
+                    custom_text=request.custom_additions,
+                    jd_text=job_description,
+                    optimize_projects=request.optimize_projects,
+                    optimize_experience=request.optimize_experience,
+                    optimize_summary=request.optimize_summary,
+                    resume_text=resume_text,
+                    targeted_answers=request.targeted_answers
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed to refine custom additions for session %s: %s", session_id, exc
+                )
+                raise HTTPException(
+                    status_code=500, detail="Failed to refine custom additions."
+                ) from exc
+        else:
+            refined = {"gaps": {}, "custom": ""}
 
         # Populate per-item return values from LLM result
         refined_gaps_map = refined.get("gaps", {})
@@ -727,9 +879,9 @@ async def refine_custom_additions_endpoint(
 
     # --- 4. Update database ---
     try:
-        # If selected_improvements provided, overwrite the stored improvements list
+        # If selected_improvements provided, store them separately so we don't lose the original suggestions
         if request.selected_improvements is not None:
-            enhanced_analysis["improvements"] = request.selected_improvements
+            enhanced_analysis["selected_improvements"] = request.selected_improvements
 
         # Update custom_additions column
         await conn.execute(
@@ -744,10 +896,20 @@ async def refine_custom_additions_endpoint(
 
         # Update enhanced_analysis with refined gaps
         if refined_gaps_map:
-            refined_gaps_list = [
-                refined_gaps_map.get(str(i), "") for i in range(len(refined_gaps_map))
-            ]
-            enhanced_analysis["gaps"] = refined_gaps_list
+            original_gaps = enhanced_analysis.get("gaps", [])
+            # Iterate through the max length of either original or refined
+            max_len = max(len(original_gaps), len(refined_gaps_map) if refined_gaps_map else 0)
+            refined_gaps_list = []
+            for i in range(max_len):
+                if str(i) in refined_gaps_map and refined_gaps_map[str(i)].strip():
+                    refined_gaps_list.append(refined_gaps_map[str(i)])
+                elif i < len(original_gaps):
+                    refined_gaps_list.append(original_gaps[i])
+                else:
+                    refined_gaps_list.append("")
+            enhanced_analysis["refined_gaps_list"] = refined_gaps_list
+        # Update enhanced_analysis with refined custom additions
+        enhanced_analysis["refined_custom_additions"] = custom_str
 
         await conn.execute(
             """
@@ -834,16 +996,19 @@ async def generate_pdf(
 
     enhanced_analysis = _parse_json(row["enhanced_analysis"]) or {}
     job_description = row["job_description"]
-    custom_additions = row["custom_additions"] or ""
-
-    # Extract gaps and improvements from enhanced analysis
-    gaps = enhanced_analysis.get("gaps", [])
-    improvements = enhanced_analysis.get("improvements", [])
-
+    
+    # Extract gaps and improvements
+    original_gaps = enhanced_analysis.get("gaps", [])
+    refined_gaps_list = enhanced_analysis.get("refined_gaps_list")
+    
+    gaps_to_use = refined_gaps_list if refined_gaps_list is not None else original_gaps
+    
     # Convert gaps to text format
-    gaps_text = "\n".join([f"- {gap}" for gap in gaps]) if gaps else "None"
+    gaps_text = "\n".join([f"- {gap}" for gap in gaps_to_use]) if gaps_to_use else "None"
 
     # Convert improvements to text format
+    # Use selected_improvements if they exist (meaning user went through refine flow), otherwise default to all
+    improvements = enhanced_analysis.get("selected_improvements", enhanced_analysis.get("improvements", []))
     improvements_text = "\n".join([f"- {imp}" for imp in improvements]) if improvements else "None"
 
     # Read original resume text from file
@@ -859,6 +1024,8 @@ async def generate_pdf(
         raise HTTPException(status_code=500, detail="Failed to read resume file.") from exc
 
     # --- 3. Call enhanced analyzer to generate PDF ---
+    custom_additions = enhanced_analysis.get("refined_custom_additions", row["custom_additions"] or "")
+    
     try:
         pdf_buffer = await generate_ats_pdf(
             resume_text=resume_text,

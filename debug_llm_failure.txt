@@ -1,0 +1,114 @@
+--- PROMPT ---
+You are an expert resume writer and career coach.
+
+You will receive these inputs:
+1. The target Job Description (JD).
+2. A list of resume gaps with user-provided structured answers for each.
+3. Optional custom additions the user wants to include in their resume.
+
+
+
+CRITICAL SECTION PLACEMENT RULES (follow these EXACTLY to ensure ATS scoring recognizes the content):
+
+A) For each gap in Gap Notes, read the user's answer carefully:
+
+   TYPE 1 — "GENERATE_PROJECT: [skill] | Name: [name] | Description: [desc]": 
+   Generate a realistic project entry. Format as a 2-3 bullet project.
+   Prefix output with exactly "project: " so the PDF generator places it in the Projects section.
+   Label as "[name]" (or generate a professional, appropriate project name based on the skill if name is missing). Do NOT use a fixed label like 'Self-Learning Project'.
+   Use the provided description and any "| User Knowledge: [knowledge]" as the basis for the bullets.
+   Make sure to highlight the specific user knowledge provided within the project bullets.
+   STRICTLY DO NOT fabricate GitHub links, metrics, or stars. Keep it simple and credible.
+   The project generated MUST be normal, easy, and basic (e.g., a simple student, academic, or basic personal/knowledge project showcasing fundamental understanding, NOT a complex enterprise-level, production-grade, or large-scale cloud microservice system).
+
+   TYPE 2 — "ADD_TO_PROJECT: [name]":
+   The user wants to add this skill to an existing project. The input may include "(Tech: ...)", "— [Description]", and "| User Knowledge: [note]".
+   Generate a polished ATS bullet that combines the description and user knowledge.
+   Output format: "add_to_project: [name] | [polished ATS bullet]"
+
+   TYPE 3 — Plain skill note (user described experience or knowledge in free text):
+   Check if the note contains " | ATTACH_TO: [name]" — if so, extract the name and route the content there.
+   - If ATTACH_TO refers to a project name → output: "add_to_project: [Project Name] | [polished ATS bullet]"
+   - If ATTACH_TO refers to a company name → output: "experience_bullet: [Company] | [inferred role if possible] | | [polished ATS bullet]"
+   - If no ATTACH_TO, check if user mentioned a specific company name → "experience_bullet: [Company] | | | [bullet]"
+   - If no company or project mentioned, but user clearly has knowledge → "skill_note: [polished 2-sentence knowledge statement using JD keywords]"
+   Use action verbs and exact JD keywords in all outputs.
+   STRICTLY DO NOT add random skills, tools, or experiences that the user did not mention.
+
+B) For Custom Additions, rewrite them as polished, ATS-friendly resume content line by line:
+
+   TYPE 1 — Company/Role/Date/Details format (lines starting with "Company:"):
+   Format the output as: "experience_bullet: [Company Name] | [Job Title] | [Start] to [End] | [polished ATS bullet using exact JD keywords]"
+   Produce EXACTLY ONE "experience_bullet:" line per company entry. If the user provides multiple achievements in the Details, combine them into the final section separated by " --- " (e.g. bullet 1 --- bullet 2).
+
+   TYPE 2 — "project: [Name] (Tech: ...) — [Description]":
+   Format as a new polished project entry with ATS-aligned bullets using JD keywords. Prefix output with exactly "project: ". Combine multiple bullets with " --- " (e.g. project: Project Name — bullet 1 --- bullet 2).
+
+   TYPE 3 — "add_to_project: [Name] (Tech: ...) — [Description]":
+   Output format: "add_to_project: [Exact Project Name] | [polished ATS bullet using JD keywords]"
+
+   TYPE 4 — "GENERATE_PROJECT: [Skills] | Name: [Project Name] | Description: [desc]"
+   Generate ONE complete, coherent project that tells a SINGLE unified story. Think of it as building one real product or tool that naturally requires ALL the listed skills.
+
+   RULES:
+   - Come up with a specific, professional project name (e.g. "Personal Expense Tracker", "Simple Library Management System", "Student Attendance Portal") — NOT a generic name like "Comprehensive Skills Project" and NOT a complex enterprise system. If the Name field is empty, you MUST invent a concise, professional title (max 8 words) that reflects a simple, normal, and basic application built for personal/academic use.
+   - Write EXACTLY 3 achievement bullets that tell a connected story:
+     • Bullet 1: What was BUILT and WHY (the simple problem it solved). Start with "Built" or "Developed".
+     • Bullet 2: The core TECHNICAL IMPLEMENTATION — how the technologies were actually used together. Keep details simple, basic, and credible for an entry-level or personal project.
+     • Bullet 3: The OUTCOME or key challenge overcome.
+   - Add ONE final bullet starting with "Tech Stack: " listing ALL the technologies.
+   - All bullets must flow together as ONE project — NOT separate mini-projects per skill.
+   - Do NOT write vague bullets like "Focused on X" or "Explored Y". Write specific, concrete accomplishments.
+   - The project generated MUST be normal, easy, and basic (e.g. a simple student, academic, or basic personal/knowledge project showcasing fundamental understanding, NOT a complex enterprise-level, production-grade, or large-scale cloud microservice system).
+   - Combine all bullets with " --- " separator.
+   - Output format: "project: [Project Name] — [Bullet 1] --- [Bullet 2] --- [Bullet 3] --- Tech Stack: [all skills]"
+
+   EXAMPLE OUTPUT for skills "SQL, Tableau, dbt":
+   project: Sales Intelligence Dashboard — Built an end-to-end analytics pipeline to surface weekly revenue trends and churn signals for the sales team --- Engineered dbt transformation models on top of a PostgreSQL warehouse, writing optimized SQL queries to clean, join, and aggregate multi-source data --- Delivered an interactive Tableau dashboard reducing manual reporting time; surfaced 3 KPI anomalies in the first week --- Tech Stack: SQL, dbt, PostgreSQL, Tableau
+
+    Preserve any section prefixes (certificate:, education:, about me:).
+   STRICTLY DO NOT add new prefixes or merge distinct sections. Do NOT remove any details provided by the user.
+
+C) TONE & LANGUAGE: Refine descriptions properly and professionally. DO NOT use heavy, overly complex jargon or "fluff" words. Use simple, impactful language that aligns exactly with the terminology from the JD.
+
+D) HYPERLINKS: If user notes contain URLs, preserve them exactly.
+
+E) STRICT RULE: NEVER fabricate dates, company names, numbers, percentages, or GitHub links.
+
+OUTPUT FORMAT (JSON only, no markdown fences, no commentary):
+{
+  "gaps": {
+    "0": "project: Data Analytics Dashboard — Built an interactive dashboard using SQL and Tableau to visualize sales trends, highlighting data manipulation skills.",
+    "1": "add_to_project: E-Commerce Platform | Integrated PostgreSQL database with normalized schemas and indexed queries to optimize product catalog retrieval performance.",
+    "2": "skill_note: Demonstrated proficiency in SQL by designing normalized schemas and writing complex JOIN queries for academic database projects."
+  },
+  "custom": "experience_bullet: TechCorp | Data Analyst | Jan 2023 to Jun 2024 | Implemented Linear Regression models using Scikit-learn to predict customer churn, aligned with data science best practices.\nproject: Customer Churn Predictor (Tech: Python, Pandas) — Developed a machine learning pipeline..."
+}
+Do not include markdown fencing. Do not include any commentary outside the JSON.
+
+--- Gap Notes ---
+None
+
+--- Custom Additions ---
+custom text
+
+--- Target Job Description ---
+We are looking for a Senior Python Developer to join our team.
+
+Requirements:
+- 5+ years of Python development experience
+- Strong knowledge of FastAPI or Flask
+- Experience with PostgreSQL and database optimization
+- Familiarity with Docker and cloud platforms (AWS/GCP)
+- Experience with CI/CD pipelines
+- Strong problem-solving skills
+
+Preferred:
+- Experience with Redis and Celery
+- Knowledge of microservices architecture
+- Background in backend system design
+
+
+
+--- LLM RESPONSE ---
+not valid json

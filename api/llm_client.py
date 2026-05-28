@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 
-async def call_openrouter(system_prompt: str, user_content: str, model: str | None = None) -> str:
+async def call_openrouter(system_prompt: str, user_content: str, model: str | None = None, max_tokens: int = 1000) -> str:
     """
     Send a chat completion request to OpenRouter and return the response content string.
 
@@ -28,7 +28,7 @@ async def call_openrouter(system_prompt: str, user_content: str, model: str | No
             {"role": "user", "content": user_content},
         ],
         "response_format": {"type": "json_object"},
-        "max_tokens": 4096,
+        "max_tokens": max_tokens,
     }
 
     async with httpx.AsyncClient(timeout=300.0) as client:

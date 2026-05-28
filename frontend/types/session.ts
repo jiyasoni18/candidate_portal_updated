@@ -80,6 +80,8 @@ export interface EnhancedAnalysis {
   ats_score: number | null;
   ats_explanation: string;
   improvements: string[];
+  existing_entities?: string[];
+  targeted_questions?: string[];
   // JD match scoring (from RANKING_PROMPT)
   match_score: number | null;
   gaps: string[];

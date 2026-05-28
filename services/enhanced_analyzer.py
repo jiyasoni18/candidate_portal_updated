@@ -11,13 +11,17 @@ from io import BytesIO
 
 from config import settings
 from api.llm_client import call_openrouter
+import logging
 
+logger = logging.getLogger(__name__)
 
-# Model constants — fall back to the configured default so invalid model names
-# don't silently break LLM calls.
-MODEL_ANALYSIS = "google/gemini-2.0-flash-001"
-MODEL_REFINE = settings.OPENROUTER_MODEL
-MODEL_PDF = settings.OPENROUTER_MODEL
+# Model constants — purpose-specific model assignments
+# Gap analysis & ATS scoring (fast, smart analysis)
+MODEL_ANALYSIS = "google/gemini-3-flash-preview"
+# Gap/input refinement and custom additions (large context, high quality rewriting)
+MODEL_REFINE = "openai/gpt-oss-120b"
+# PDF resume generation (large context, precise instruction-following)
+MODEL_PDF = "openai/gpt-oss-120b"
 
 
 async def _call_llm_async(model: str, messages: list, temperature: float = 0.2, max_tokens: int = 2000) -> str:
@@ -37,21 +41,36 @@ async def _call_llm_async(model: str, messages: list, temperature: float = 0.2, 
 
     # call_openrouter always sends system + user; pass empty string for system
     # when the prompt is entirely user-side (as is the case for enhanced analysis)
-    response = await call_openrouter(system_prompt, user_content, model)
+    limit_tokens = min(max_tokens, 1200)
+    response = await call_openrouter(system_prompt, user_content, model, max_tokens=limit_tokens)
     return response
 
 
 def _strip_markdown_json(text: str) -> str:
-    """Remove ```json ... ``` fences if present."""
-    text = text.strip()
-    if text.startswith("```"):
-        lines = text.split("\n")
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].startswith("```"):
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
-    return text
+    """Extract JSON from Markdown fences, ignoring conversational text."""
+    # First, try to find a markdown code block
+    match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
+    if match:
+        text = match.group(1).strip()
+    
+    # Second, to handle extra conversational text before or after the JSON,
+    # find the outermost '{...}' or '[...]'
+    start_dict = text.find('{')
+    end_dict = text.rfind('}')
+    
+    start_list = text.find('[')
+    end_list = text.rfind(']')
+    
+    # Determine which one encapsulates the most content
+    dict_len = end_dict - start_dict if start_dict != -1 and end_dict != -1 else -1
+    list_len = end_list - start_list if start_list != -1 and end_list != -1 else -1
+    
+    if dict_len > 0 and dict_len >= list_len:
+        return text[start_dict:end_dict+1]
+    elif list_len > 0:
+        return text[start_list:end_list+1]
+        
+    return text.strip()
 
 
 async def analyze_ats_score(
@@ -124,8 +143,10 @@ Return ONLY a valid JSON object with these exact keys:
 - "ats_score": Integer 0-100. Computed from Step 2.
 - "ats_explanation": 2-3 sentences. State the score breakdown (e.g., "Keyword match: X/50, Job title: Y/15, Structure: Z/20") and what specifically is causing points to be lost. Use EXACT JD wording.
 - "improvements": List of strings — STRICTLY ONLY terminology/wording mismatches. Where the candidate HAS the skill but uses different words than the JD uses, causing ATS keyword miss.
-  FORMAT: "Resume uses '[resume wording]' — JD requires '[exact JD term]'. Rephrase to '[exact JD term]' to improve keyword match."
+  FORMAT: "REPLACE '[resume wording]' WITH '[exact JD term] ([resume wording])'"
   DO NOT put missing skills here. If no wording mismatches exist, return []. List ALL terminology mismatches; do not limit the number.
+- "existing_entities": List of strings — EXTRACT all Project names and Company names from the original resume. These will be used for a dropdown. Format: ["Project: [Name]", "Company: [Name]"].
+- "targeted_questions": List of strings (max 3-4) — Ask the candidate for MISSING METRICS (e.g. accuracy, scale, performance) or MISSING CONTEXT regarding tools/skills the JD requires that they might have used in their listed experiences but failed to mention. Example: "The JD requires AWS. Did you use AWS in your role at TechCorp?", "You mentioned creating a model, what was the accuracy or scale?"
 - "core_strengths": List of 3-5 strings — candidate's strongest JD-aligned qualifications. Use the exact JD terminology where possible.
 - "summary": 2-3 sentence overview of suitability for this specific role.
 
@@ -133,7 +154,11 @@ STRICT RULES:
 - All output MUST use the exact terminology from the JD, not generic descriptions.
 - "improvements" = ONLY cases where skill EXISTS in resume but uses WRONG words vs JD. Never use this for missing skills.
 - DO NOT INCLUDE EXACT MATCHES in improvements. If the resume already uses the exact JD term (e.g. "Linear Regression" -> "Linear Regression"), it is NOT an improvement. DO NOT INCLUDE IT.
-- DO NOT MAP UNRELATED CONCEPTS in improvements (e.g. do not map "workflow automation" to "Learning & Development"). Only map actual synonymous terms.
+- DO NOT INCLUDE CASE-ONLY DIFFERENCES. If the only difference between the resume term and the JD term is capitalization (e.g. "Scikit-learn" vs "scikit-learn"), it is NOT an improvement. DO NOT INCLUDE IT.
+- DO NOT INCLUDE SELF-REFERENTIAL REPLACEMENTS. If the replacement would result in the same word appearing twice (e.g. "scikit-learn (Scikit-learn)") where both words mean the same thing, do NOT include it.
+- DO NOT MAP UNRELATED CONCEPTS in improvements (e.g. do not map "workflow automation" to "Learning & Development", or "agentic concepts" to "Exploratory Data Analysis"). Only map actual synonymous terms that are truly different words (e.g. "Deep Learning" vs "Neural Networks").
+- A valid improvement example: REPLACE 'Scikit' WITH 'scikit-learn' (only if resume says "Scikit" and JD says "scikit-learn").
+- An INVALID improvement: REPLACE 'Scikit-learn' WITH 'scikit-learn (Scikit-learn)' — this is just a capitalization variant of the same term. FORBIDDEN.
 - Do NOT invent metrics or fabricate evidence.
 - Output valid JSON only. No markdown fences.
 
@@ -148,7 +173,7 @@ RESUME:
     messages = [{"role": "user", "content": prompt}]
     result_text = await _call_llm_async(model_name, messages, temperature=0.0, max_tokens=1500)
     result_text = _strip_markdown_json(result_text)
-    return json.loads(result_text)
+    return json.loads(result_text, strict=False)
 
 
 async def analyze_jd_match(
@@ -209,7 +234,7 @@ async def analyze_jd_match(
     messages = [{"role": "user", "content": prompt}]
     result_text = await _call_llm_async(model_name, messages, temperature=0.0, max_tokens=4000)
     result_text = _strip_markdown_json(result_text)
-    return json.loads(result_text)
+    return json.loads(result_text, strict=False)
 
 import hashlib
 import collections
@@ -233,12 +258,8 @@ async def analyze_resume_enhanced(
       From Match: score (match_score), section_scores, section_reasons,
                   mandatory_skills_check, good_to_have_check, gaps, flags
     """
-    # Use a deterministic hash cache for exact same inputs to prevent score fluctuation
-    cache_key = hashlib.sha256(f"{resume_text.strip()}|{jd_text.strip()}|{model_name}".encode('utf-8')).hexdigest()
-    if cache_key in _analysis_cache:
-        import copy
-        _analysis_cache.move_to_end(cache_key) # Mark as most recently used
-        return copy.deepcopy(_analysis_cache[cache_key])
+    # Cache disabled — always run a fresh analysis so changes are reflected immediately
+
 
     import asyncio
 
@@ -247,6 +268,9 @@ async def analyze_resume_enhanced(
         analyze_jd_match(resume_text, jd_text, model_name),
         return_exceptions=True,
     )
+
+    if isinstance(ats_result, Exception) and isinstance(match_result, Exception):
+        raise ats_result
 
     merged: Dict[str, Any] = {}
 
@@ -279,12 +303,6 @@ async def analyze_resume_enhanced(
         merged["strengths"] = match_result.get("strengths", merged.get("core_strengths", []))
         merged["flags"] = match_result.get("flags", {})
         merged["dropped"] = match_result.get("dropped", False)
-
-    import copy
-    _analysis_cache[cache_key] = copy.deepcopy(merged)
-    # Evict oldest if we exceed capacity
-    if len(_analysis_cache) > MAX_CACHE_SIZE:
-        _analysis_cache.popitem(last=False)
 
     return merged
 
@@ -319,7 +337,6 @@ def parse_custom_additions(custom_text: str) -> Dict[str, List[str]]:
                 sections["education"].append(content)
         else:
             sections["additional"].append(line)
-    
     return sections
 
 
@@ -327,51 +344,145 @@ async def refine_custom_additions(
     gaps_data: Dict[str, Dict[str, str]],
     custom_text: str,
     jd_text: str,
+    optimize_projects: bool = False,
+    optimize_experience: bool = False,
+    optimize_summary: bool = False,
+    resume_text: str = "",
+    targeted_answers: Optional[Dict[str, str]] = None,
     api_key: Optional[str] = None,
     model_name: str = MODEL_REFINE
 ) -> Dict[str, Any]:
     """
-    Refine gap content and custom additions in a single API call.
-    
-    Args:
-        gaps_data: Dict mapping index -> {"gap": str, "note": str}
-        custom_text: User-provided custom additions
-        jd_text: Job description text
-        api_key: Optional API key (uses config if not provided)
-        model_name: LLM model to use for refinement
-        
-    Returns:
-        Dict with "gaps" (refined gap paragraphs) and "custom" (refined custom additions)
+    Refine gap content, custom additions, and optimize specific sections in a single API call.
     """
-    if not gaps_data and not custom_text.strip():
+    # Only process gaps that have actual user notes/answers
+    active_gaps = {idx: data for idx, data in gaps_data.items() if data.get("note", "").strip()}
+    
+    if not active_gaps and not custom_text.strip() and not (optimize_projects or optimize_experience or optimize_summary):
         return {"gaps": {}, "custom": ""}
     
     gaps_text = "\n".join(
         [f"ID {idx} | Gap: '{data['gap']}' | User Notes: '{data['note']}'"
-         for idx, data in gaps_data.items()]
-    ) if gaps_data else "None"
+         for idx, data in active_gaps.items()]
+    ) if active_gaps else "None"
+
+    optimization_instructions = ""
+    if optimize_projects or optimize_experience or optimize_summary:
+        optimization_instructions = "\n\n════════════════════════════════════════════════════════\n"
+        optimization_instructions += "SECTION OPTIMIZATION INSTRUCTIONS\n"
+        optimization_instructions += "════════════════════════════════════════════════════════\n"
+        optimization_instructions += f"You have been asked to rewrite specific sections of the user's original resume to better align with the JD keywords. The original resume is provided below.\n\n"
+        
+        if optimize_projects:
+            optimization_instructions += "PROJECTS OPTIMIZATION:\n"
+            optimization_instructions += "- Rewrite the existing PROJECTS section to naturally incorporate JD keywords.\n"
+            optimization_instructions += "- For each project rewritten, output a line in the `custom` field starting with: `rewrite_project: [Exact Original Project Name] — [Bullet 1] --- [Bullet 2] --- Tech Stack: [skills]`.\n"
+            
+        if optimize_experience:
+            optimization_instructions += "EXPERIENCE OPTIMIZATION:\n"
+            optimization_instructions += "- Rewrite the existing PROFESSIONAL EXPERIENCE section to naturally incorporate JD keywords.\n"
+            optimization_instructions += "- For each job rewritten, output a line in the `custom` field starting with: `rewrite_experience: [Exact Original Company Name] | [Job Title] | [Start - End] | [Bullet 1] --- [Bullet 2]`.\n"
+            
+        if optimize_summary:
+            optimization_instructions += "SUMMARY OPTIMIZATION:\n"
+            optimization_instructions += "- Rewrite the PROFESSIONAL SUMMARY to naturally incorporate JD keywords.\n"
+            optimization_instructions += "- Output a line in the `custom` field starting with: `rewrite_summary: [The rewritten paragraph]`.\n"
+
+        optimization_instructions += "\nCRITICAL: Do NOT fabricate any new metrics, dates, or experiences. Only reword existing content to match JD terminology.\n"
+        optimization_instructions += f"\n--- Original Resume ---\n{resume_text}\n"
     
+    targeted_answers_text = ""
+    if targeted_answers and any(ans.strip() for ans in targeted_answers.values()):
+        targeted_answers_text = "\n\n4. Answers to Targeted Questions about missing metrics/context:\n"
+        for q, a in targeted_answers.items():
+            if a.strip():
+                targeted_answers_text += f"Q: {q}\nA: {a}\n\n"
+        targeted_answers_text += "For these targeted answers, integrate the user's provided context into the most relevant rewritten Experience or Project bullet. If no logical place exists, output it as an `add_to_project` or `experience_bullet`.\n"
+
     prompt = f"""You are an expert resume writer and career coach.
 
-You will receive three inputs:
+You will receive these inputs:
 1. The target Job Description (JD).
-2. A list of resume gaps with user-provided notes for each.
+2. A list of resume gaps with user-provided structured answers for each.
 3. Optional custom additions the user wants to include in their resume.
+{targeted_answers_text}
+{optimization_instructions}
 
-Your tasks:
-A) For each gap:
-   - If the user notes start with "GENERATE_PROJECT:", DO NOT write a standard gap paragraph. Instead, generate a full, realistic ATS-friendly project (title and 2 bullet points) demonstrating that skill. You MUST start the output string with exactly "project: " (e.g., "project: Basic AI Pipeline - Developed a robust data pipeline...").
-   - Otherwise, transform the user notes into a concise, professional, ATS-friendly paragraph addressing that gap (MAXIMUM 2-3 sentences). Make sure the phrasing, keywords, and tone align strongly with the target Job Description. Be specific - use action verbs, but STRICTLY DO NOT invent, hallucinate, or mention any numerical metrics, numbers, or percentages (e.g., 15%, 20%, 3x) unless they are explicitly provided by the user in their notes.
-B) If custom additions are provided, rewrite them as polished, ATS-friendly resume content. IF the user prefixed an addition with a specific section (e.g., "certificate: ...", "education: ..."), YOU MUST PRESERVE THAT PREFIX in your rewritten output. For certificates, output the exact name of the certificate, the agency, and the score if provided; DO NOT add extra words like "Completed " before it, and DO NOT use any bold formatting (**). DO NOT merge distinct sections into a single paragraph; keep them separated by newlines if necessary. DO NOT invent or hallucinate metrics or numbers.
-C) HYPERLINKS & URLS: If the user's notes or custom additions contain any URLs or hyperlinks, you MUST preserve them exactly as provided in your refined output. Do not strip, shorten, or alter any URL.
-D) ABOUT ME / PROFESSIONAL SUMMARY: If any custom addition line is prefixed with "about me:" or "professional summary:" (case-insensitive), treat that content as the professional summary material. Make slight professional modifications to it if needed to align with the JD, but DO NOT differentiate it from a professional summary. Preserve the "about me:" prefix in your output so the PDF generator can merge it into the Professional Summary section.
-E) PROJECTS: If a custom addition is prefixed with "project:" (case-insensitive), you MUST format it as a new Project and place it in the Projects section, DO NOT put it in the Professional Summary.
+CRITICAL SECTION PLACEMENT RULES (follow these EXACTLY to ensure ATS scoring recognizes the content):
+
+A) For each gap in Gap Notes, read the user's answer carefully:
+
+   TYPE 1 — "GENERATE_PROJECT: [skill] | Name: [name] | Description: [desc]": 
+   Generate a realistic project entry. Format as a 2-3 bullet project.
+   Prefix output with exactly "project: " so the PDF generator places it in the Projects section.
+   Label as "[name]" (or generate a professional, appropriate project name based on the skill if name is missing). Do NOT use a fixed label like 'Self-Learning Project'.
+   Use the provided description and any "| User Knowledge: [knowledge]" as the basis for the bullets.
+   Make sure to highlight the specific user knowledge provided within the project bullets.
+   STRICTLY DO NOT fabricate GitHub links, metrics, or stars. Keep it simple and credible.
+   The project generated MUST be normal, easy, and basic (e.g., a simple student, academic, or basic personal/knowledge project showcasing fundamental understanding, NOT a complex enterprise-level, production-grade, or large-scale cloud microservice system).
+
+   TYPE 2 — "ADD_TO_PROJECT: [name]":
+   The user wants to add this skill to an existing project. The input may include "(Tech: ...)", "— [Description]", and "| User Knowledge: [note]".
+   Generate a polished ATS bullet that combines the description and user knowledge.
+   Output format: "add_to_project: [name] | [polished ATS bullet]"
+
+   TYPE 3 — Plain skill note (user described experience or knowledge in free text):
+   Check if the note contains " | ATTACH_TO: [name]" — if so, extract the name and route the content there.
+   - If ATTACH_TO refers to a project name → output: "add_to_project: [Project Name] | [polished ATS bullet]"
+   - If ATTACH_TO refers to a company name → output: "experience_bullet: [Company] | [inferred role if possible] | | [polished ATS bullet]"
+   - If no ATTACH_TO, check if user mentioned a specific company name → "experience_bullet: [Company] | | | [bullet]"
+   - If no company or project mentioned, but user clearly has knowledge → "skill_note: [polished 2-sentence knowledge statement using JD keywords]"
+   Use action verbs and exact JD keywords in all outputs.
+   STRICTLY DO NOT add random skills, tools, or experiences that the user did not mention.
+
+B) For Custom Additions, rewrite them as polished, ATS-friendly resume content line by line:
+
+   TYPE 1 — Company/Role/Date/Details format (lines starting with "Company:"):
+   Format the output as: "experience_bullet: [Company Name] | [Job Title] | [Start] to [End] | [polished ATS bullet using exact JD keywords]"
+   Produce EXACTLY ONE "experience_bullet:" line per company entry. If the user provides multiple achievements in the Details, combine them into the final section separated by " --- " (e.g. bullet 1 --- bullet 2).
+
+   TYPE 2 — "project: [Name] (Tech: ...) — [Description]":
+   Format as a new polished project entry with ATS-aligned bullets using JD keywords. Prefix output with exactly "project: ". Combine multiple bullets with " --- " (e.g. project: Project Name — bullet 1 --- bullet 2).
+
+   TYPE 3 — "add_to_project: [Name] (Tech: ...) — [Description]":
+   Output format: "add_to_project: [Exact Project Name] | [polished ATS bullet using JD keywords]"
+
+   TYPE 4 — "GENERATE_PROJECT: [Skills] | Name: [Project Name] | Description: [desc]"
+   Generate ONE complete, coherent project that tells a SINGLE unified story. Think of it as building one real product or tool that naturally requires ALL the listed skills.
+
+   RULES:
+   - Come up with a specific, professional project name (e.g. "Personal Expense Tracker", "Simple Library Management System", "Student Attendance Portal") — NOT a generic name like "Comprehensive Skills Project" and NOT a complex enterprise system. If the Name field is empty, you MUST invent a concise, professional title (max 8 words) that reflects a simple, normal, and basic application built for personal/academic use.
+   - Write EXACTLY 3 achievement bullets that tell a connected story:
+     • Bullet 1: What was BUILT and WHY (the simple problem it solved). Start with "Built" or "Developed".
+     • Bullet 2: The core TECHNICAL IMPLEMENTATION — how the technologies were actually used together. Keep details simple, basic, and credible for an entry-level or personal project.
+     • Bullet 3: The OUTCOME or key challenge overcome.
+   - Add ONE final bullet starting with "Tech Stack: " listing ALL the technologies.
+   - All bullets must flow together as ONE project — NOT separate mini-projects per skill.
+   - Do NOT write vague bullets like "Focused on X" or "Explored Y". Write specific, concrete accomplishments.
+   - The project generated MUST be normal, easy, and basic (e.g. a simple student, academic, or basic personal/knowledge project showcasing fundamental understanding, NOT a complex enterprise-level, production-grade, or large-scale cloud microservice system).
+   - Combine all bullets with " --- " separator.
+   - Output format: "project: [Project Name] — [Bullet 1] --- [Bullet 2] --- [Bullet 3] --- Tech Stack: [all skills]"
+
+   EXAMPLE OUTPUT for skills "SQL, Tableau, dbt":
+   project: Sales Intelligence Dashboard — Built an end-to-end analytics pipeline to surface weekly revenue trends and churn signals for the sales team --- Engineered dbt transformation models on top of a PostgreSQL warehouse, writing optimized SQL queries to clean, join, and aggregate multi-source data --- Delivered an interactive Tableau dashboard reducing manual reporting time; surfaced 3 KPI anomalies in the first week --- Tech Stack: SQL, dbt, PostgreSQL, Tableau
+
+    Preserve any section prefixes (certificate:, education:, about me:).
+   STRICTLY DO NOT add new prefixes or merge distinct sections. Do NOT remove any details provided by the user.
+
+C) TONE & LANGUAGE: Refine descriptions properly and professionally. DO NOT use heavy, overly complex jargon or "fluff" words. Use simple, impactful language that aligns exactly with the terminology from the JD.
+
+D) HYPERLINKS: If user notes contain URLs, preserve them exactly.
+
+E) STRICT RULE: NEVER fabricate dates, company names, numbers, percentages, or GitHub links.
+
+OUTPUT FORMAT (JSON only, no markdown fences, no commentary):
 {{
   "gaps": {{
-    "0": "Refined ATS-friendly paragraph for gap ID 0",
-    "1": "Refined ATS-friendly paragraph for gap ID 1"
+    "0": "project: Data Analytics Dashboard — Built an interactive dashboard using SQL and Tableau to visualize sales trends, highlighting data manipulation skills.",
+    "1": "add_to_project: E-Commerce Platform | Integrated PostgreSQL database with normalized schemas and indexed queries to optimize product catalog retrieval performance.",
+    "2": "skill_note: Demonstrated proficiency in SQL by designing normalized schemas and writing complex JOIN queries for academic database projects."
   }},
-  "custom": "Polished custom additions paragraph (empty string if none)"
+  "custom": "experience_bullet: TechCorp | Data Analyst | Jan 2023 to Jun 2024 | Implemented Linear Regression models using Scikit-learn to predict customer churn, aligned with data science best practices.\\nproject: Customer Churn Predictor (Tech: Python, Pandas) — Developed a machine learning pipeline..."
 }}
 Do not include markdown fencing. Do not include any commentary outside the JSON.
 
@@ -388,8 +499,89 @@ Do not include markdown fencing. Do not include any commentary outside the JSON.
     messages = [{"role": "user", "content": prompt}]
     content_str = await _call_llm_async(model_name, messages, temperature=0.2, max_tokens=2000)
     content_str = _strip_markdown_json(content_str)
-    return json.loads(content_str)
+    try:
+        return json.loads(content_str, strict=False)
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse LLM refine response: {e}\nResponse: {content_str}")
+        try:
+            with open("debug_llm_failure.txt", "w", encoding="utf-8") as f:
+                f.write("--- PROMPT ---\n")
+                f.write(prompt)
+                f.write("\n\n--- LLM RESPONSE ---\n")
+                f.write(content_str)
+        except Exception as io_err:
+            logger.error(f"Failed to write debug file: {io_err}")
+        raise e
+    except Exception as e:
+        logger.error(f"Failed to parse LLM refine response: {e}\nResponse: {content_str}")
+        raise ValueError(f"AI generated invalid response format. Response was: {content_str}") from e
 
+
+async def reanalyze_gaps(
+    resume_text: str,
+    jd_text: str,
+    custom_additions: str,
+    original_gaps_text: str = "",
+    model_name: str = MODEL_ANALYSIS
+) -> list[str]:
+    """
+    Fast re-analysis of gaps taking into account the user's newly added experiences and projects.
+    Returns a list of skill gaps that are STILL missing.
+    """
+    prompt = f"""You are an expert technical recruiter. A candidate has some known skill gaps in their resume.
+They have written some NEW additions (projects or experiences) to try to fill these gaps.
+
+Your task is to check if the NEW additions successfully demonstrate the skills missing in the known gaps.
+
+--- New Additions ---
+{custom_additions}
+
+--- Known Skill Gaps ---
+{original_gaps_text}
+--------------------------------------------------
+Analyze the New Additions. Which of the Known Skill Gaps are STILL MISSING (i.e., the candidate failed to mention or demonstrate them in the New Additions)?
+List ONLY the INDICES (numbers) of the gaps that are STILL missing.
+If the New Additions are unrelated, gibberish, or do not clearly demonstrate the skill, you MUST return ALL the indices!
+For example, if "Gap 0" and "Gap 2" are not covered by the new additions, return [0, 2].
+Format as a valid JSON list of integers. Do not include markdown fences or any other text.
+Example: [0, 2]
+"""
+    try:
+        messages = [{"role": "user", "content": prompt}]
+        result_text = await _call_llm_async(model_name, messages, temperature=0.0, max_tokens=1000)
+        result_text = _strip_markdown_json(result_text)
+        import json
+        gaps_indices = json.loads(result_text, strict=False)
+        
+        # Map indices back to the exact strings
+        original_lines = []
+        import re
+        for line in original_gaps_text.split("\n"):
+            match = re.match(r"^Gap \d+: (.+)$", line.strip())
+            if match:
+                original_lines.append(match.group(1))
+
+        if isinstance(gaps_indices, list):
+            remaining = []
+            for i in gaps_indices:
+                try:
+                    idx = int(i)
+                    if 0 <= idx < len(original_lines):
+                        remaining.append(original_lines[idx])
+                except (ValueError, TypeError):
+                    continue
+            return remaining
+        return original_lines
+    except Exception as e:
+        # Fallback to returning all original gaps if anything fails
+        logger.error(f"reanalyze_gaps LLM call failed: {e}")
+        original_lines = []
+        import re
+        for line in original_gaps_text.split("\n"):
+            match = re.match(r"^Gap \d+: (.+)$", line.strip())
+            if match:
+                original_lines.append(match.group(1))
+        return original_lines
 
 async def generate_ats_pdf(
     resume_text: str,
@@ -443,8 +635,8 @@ async def generate_ats_pdf(
         page_limit_rule = (
             "6. Ensure the final resume is perfectly formatted. PRESERVE ORIGINAL CONTENT: "
             "You MUST preserve all original bullet points, details, and metrics from the "
-            "candidate's Projects and Professional Experience sections. DO NOT truncate, "
-            "summarize, or minimize the original project descriptions and work experience. Make proper formatting but preserve the full length."
+            "candidate's Projects and Professional Experience sections EXACTLY as they are. DO NOT truncate, "
+            "summarize, or minimize the original project descriptions and work experience. DO NOT remove any content from the original resume. Just format it properly and apply the terminology improvements according to the JD."
         )
     
     prompt = f"""You are a world-class ATS resume formatter and career writer.
@@ -457,9 +649,9 @@ I have an original resume along with:
 
 CRITICAL RULES — READ BEFORE OUTPUTTING ANYTHING:
 a) The PROFESSIONAL SUMMARY section is MANDATORY. If the original resume has one, use/refine it. If it does not, you MUST generate one. STRICT WORD LIMIT: The length of the summary MUST be 60-80 words for a fresher/entry-level candidate, and 60-110 words for an experienced candidate. Do not exceed these limits so it fits properly on A4 size. Integrate the original content, JD, and (only if provided) gap content/custom additions. DO NOT invent information.
-b) For all other sections (CERTIFICATIONS, ACHIEVEMENTS, ADDITIONAL_SECTIONS, PROJECTS), ONLY include them if they actually exist in the Original Resume OR if they were explicitly provided in the Custom Additions (e.g., prefixed with 'certificate:'). Do NOT create them otherwise.
+b) PRESERVE EXISTING SECTIONS & CONTENT: You MUST preserve and include all sections (such as CERTIFICATIONS, PROJECTS, ACHIEVEMENTS, EDUCATION, PROFESSIONAL EXPERIENCE, etc.) if they exist in the Original Resume. You are STRICTLY FORBIDDEN from dropping or omitting any section, certification, or project item that is present in the original resume. They must all be present in the updated resume.
 c) In the EDUCATION section, the "heading" field must be plain text (e.g. "MBA in Human Resources | Gujarat Technological University | 2023 - 2025"). If the original resume includes a percentage or CGPA (e.g. "8.5 CGPA", "85%"), you MUST include it as a bullet inside that education item's "bullets" array.
-d) Never output empty arrays as section placeholders — if a section has no real content from the original resume, omit it entirely.
+d) Never output empty arrays as section placeholders — if a section has no real content from the original resume and is not requested via Custom Additions, omit it entirely.
 
 ⚡ ATS SCORE IMPROVEMENT RULES (MANDATORY — These directly raise the ATS score):
 ATS-1. KEYWORD SATURATION: Extract ALL important keywords, skills, and technologies from the JD. Every keyword that is already present in the resume MUST appear at least once in the Technical Skills section, PLUS be woven naturally into the Professional Summary. Do NOT keyword-stuff bullet points — place keywords in Skills and Summary.
@@ -470,15 +662,56 @@ ATS-5. SECTION HEADERS: Use EXACT standard ATS section titles: "PROFESSIONAL SUM
 ATS-6. SKILLS FORMAT: In the TECHNICAL SKILLS section, format as "Category: Skill1, Skill2, Skill3" on separate lines. Add JD-relevant skills the candidate demonstrably has based on their project/experience evidence.
 
 Instructions:
-1. Integrate all refined gap content logically into the candidate's existing PROFESSIONAL EXPERIENCE or PROJECTS sections as new bullet points. The skills must be attached to real work history to pass ATS context checks. If the gap content cannot logically fit into existing roles, only then add it to the PROFESSIONAL SUMMARY.
-2. Apply terminology improvements by replacing original phrasing with exact JD keywords specifically in the Technical Skills, Experience, or Projects sections where they belong. Do not just dump them in the summary; optionally keep original tech in brackets (e.g., "Python (Pandas)").
-3. For Custom Additions: if the user explicitly prefixes an addition with a section name (e.g., 'certificate:', 'education:', 'project:'), you MUST create that section if it does not exist (e.g., CERTIFICATIONS, EDUCATION, PROJECTS) and place the item there. Do NOT put certificates, education, or projects into the Professional Summary. If a line is prefixed with 'about me:' or 'professional summary:' (case-insensitive), treat that content as the professional summary material and merge it into the PROFESSIONAL SUMMARY section — do NOT place it in any other section. If no prefix is given, incorporate it into the most logical section.
-4. STRICT RULE: NEVER fabricate dates, years, companies, percentages, or ANY numerical metrics. You are STRICTLY FORBIDDEN from mentioning any numerical values in the updated resume unless they are explicitly present in the Original Resume or explicitly provided by the user in the Custom Additions/Gaps. Preserve any percentage or CGPA values present in the Education section.
+1. GAP CONTENT PLACEMENT (CRITICAL — this directly determines your ATS score improvement):
+   The Refined Gap Content uses prefixes to tell you exactly where to place each item:
+   
+   a) "experience_bullet: [Company] | [Role] | [Start] to [End] | [bullet text]"
+      → Find the matching company in PROFESSIONAL EXPERIENCE. Add the bullet text to that company's bullets list.
+      → If the bullet text contains ' --- ', split it and add each part as a separate bullet under that company.
+      → If the company is NOT already in the resume, create a new experience entry with the provided company, role, and date, and add the bullet(s).
+      → NEVER put experience bullets in the Professional Summary.
+   
+   b) "project: [Project Name] — [description]"
+      → Add as a NEW entry in the PROJECTS section. Create the PROJECTS section if it doesn't exist.
+      → If the description contains ' --- ', split it and add each part as a separate bullet.
+      → If a URL is present in the text (e.g., "| <a href=...>"), include it as a link in the project heading.
+      → NEVER put project content in the Professional Summary.
+   
+   c) "add_to_project: [Exact Project Name] | [bullet text]"
+      → Find the matching project in the PROJECTS section by name. ADD the bullet text to that project's existing bullets.
+      → If the bullet text contains ' --- ', split it and add each part as a separate bullet.
+      → CRITICAL: Insert the new bullet(s) BEFORE any existing bullet that starts with "Tech Stack:" or "Technologies:". New achievement bullets must always come before the tech stack line.
+      → Do NOT create a new project entry. Only append to the named existing project.
+      → If no match is found by name, add as a new project entry.
+
+   d) "skill_note: [text]"
+      → Incorporate into the PROFESSIONAL SUMMARY as supporting evidence.
+
+   e) "rewrite_project: [Exact Project Name] — [description]"
+      → REPLACES the existing project entry with this exact name. Split description by ' --- ' into bullets.
+
+   f) "rewrite_experience: [Exact Company Name] | [Job Title] | [Start - End] | [description]"
+      → REPLACES the existing experience entry for this company. Split description by ' --- ' into bullets.
+
+   g) "rewrite_summary: [text]"
+      → REPLACES the entire PROFESSIONAL SUMMARY with this text.
+
+   h) Any gap content without a recognized prefix → Use your judgment: if it describes work experience, add as an experience bullet; if it describes a project, add as a project; otherwise, incorporate into the Summary.
+
+2. ORDERING RULES (STRICTLY ENFORCE):
+   - EDUCATION: List entries in REVERSE CHRONOLOGICAL order (most recent degree/graduation year FIRST).
+   - PROFESSIONAL EXPERIENCE / TRAINING EXPERIENCE: List jobs in REVERSE CHRONOLOGICAL order (most recent/current role FIRST, oldest role LAST).
+   - PROJECTS: Maintain the order from the original resume unless a new project is added — new projects go at the END.
+   - NEVER reorder a section in a way that puts older dates above newer dates.
+
+2. Apply terminology improvements exactly as instructed in the improvements list. If an improvement says "REPLACE 'X' WITH 'Y (X)'", you MUST replace occurrences of 'X' with 'Y (X)' in the Technical Skills, Experience, or Projects sections. Do NOT alter or remove any other part of the sentence or bullet point. Just swap the exact word.
+3. For Custom Additions: if the user explicitly prefixes an addition with a section name (e.g., 'certificate:', 'education:', 'project:', 'achievement:'), you MUST create that section if it does not exist (e.g., CERTIFICATIONS, EDUCATION, PROJECTS, ACHIEVEMENTS) and place the item there. Do NOT put certificates, education, projects, or achievements into the Professional Summary. If a line is prefixed with 'about me:' or 'professional summary:' (case-insensitive), treat that content as the professional summary material and merge it into the PROFESSIONAL SUMMARY section — do NOT place it in any other section. If no prefix is given, incorporate it into the most logical section.
+4. STRICT RULE: NEVER fabricate dates, years, companies, percentages, or ANY numerical metrics. You are STRICTLY FORBIDDEN from mentioning any numerical values in the updated resume unless they are explicitly present in the Original Resume or explicitly provided by the user in the Custom Additions/Gaps. Preserve any percentage or CGPA values present in the Education section. You MUST escape any double quotes inside JSON string values with a backslash (e.g., \"word\").
 5. Keep bullet points concise, start with strong action verbs, and quantify only when data exists in the original resume or user input. DO NOT use bold or markdown formatting (like **bold**) within the text of any section, especially custom additions. For certificates, simply list the name and agency/score without adding extra verbs like "Completed".
 {page_limit_rule}
 7. Produce clean, professional output that passes ATS keyword scanning for the provided JD without keyword stuffing or repetitive phrasing.
-8. Do NOT add new job experiences, companies, dates, or achievements unless they come from Refined Gap Content or Custom Additions. (Exception 1: You MUST generate a Professional Summary if missing). (Exception 2: Per ATS-2, you MAY enrich the TECHNICAL SKILLS section with JD-relevant skills that are verifiably evidenced in the candidate's existing projects, coursework, or certifications).
-9. HYPERLINKS & BACKLINKING: You MUST preserve ALL hyperlinks/URLs from the original resume and Custom Additions. Format them EXACTLY as HTML tags in your JSON output like this: <a href="URL" color="blue">Link Text</a>. You must do this for the contact header (e.g., <a href="URL" color="blue">LinkedIn</a>) and any project links. Do NOT strip URLs.
+8. Do NOT add new job experiences, companies, dates, or achievements unless they come from Refined Gap Content or Custom Additions. (Exception 1: You MUST generate a Professional Summary if missing). (Exception 2: Per ATS-2, you MAY enrich the TECHNICAL SKILLS section with JD-relevant skills that are verifiably evidenced in the candidate's existing projects, coursework, or certifications). (Exception 3: You MUST extract the core skill keywords from any unaddressed skill gaps in the original text and seamlessly add them to the TECHNICAL SKILLS section as a comma-separated list. This is mandatory for ATS optimization).
+9. HYPERLINKS & BACKLINKING (CRITICAL): You MUST preserve ALL hyperlinks/URLs from the original resume and Custom Additions. If the original resume contains a link (like a GitHub link in the projects section, a backlink on a certificate in the certifications section, a LinkedIn link, or a portfolio link), you MUST preserve it. Extract the link from the original text (e.g. from markdown link formats like `[Link Text](URL)` or URLs) and output it in the updated resume formatted EXACTLY as HTML tags in your JSON output: <a href="URL" color="blue">Link Text</a>. You must do this for contact headers, project names, and certificates (e.g. <a href="https://example.com/cert" color="blue">AWS Certified Developer</a>). DO NOT strip or drop any URLs or backlinks.
 10. CONTACT HEADER FORMATTING: In the "contact" string of the header, you MUST separate each item (phone, email, links) with a " | " character with spaces around it. E.g., "phone | email | <a href...>LinkedIn</a> | <a href...>GitHub</a>".
 
 Output JSON with sections in this order (PROFESSIONAL SUMMARY is mandatory, ONLY include other sections if they exist in the original resume or are explicitly requested via Custom Additions): PROFESSIONAL SUMMARY, EDUCATION, PROFESSIONAL EXPERIENCE (if any), TECHNICAL SKILLS, PROJECTS (if present), CERTIFICATIONS (if present), ACHIEVEMENTS (if present), then any other original sections. Return ONLY valid JSON (no markdown, no commentary):
@@ -514,6 +747,17 @@ Output JSON with sections in this order (PROFESSIONAL SUMMARY is mandatory, ONLY
       ]
     }},
     {{
+      "title": "CERTIFICATIONS (if present)",
+      "type": "bullets",
+      "content": ["<a href=\"URL\" color=\"blue\">Certificate Name 1</a>", "Certificate Name 2"]
+    }},
+    {{
+      "title": "ACHIEVEMENTS (if present)",
+      "type": "bullets",
+      "content": ["Achievement 1", "Achievement 2"]
+    }}
+
+    {{
       "title": "TECHNICAL SKILLS",
       "type": "bullets",
       "content": ["Category: Skill1, Skill2"]
@@ -540,8 +784,22 @@ Output JSON with sections in this order (PROFESSIONAL SUMMARY is mandatory, ONLY
     messages = [{"role": "user", "content": prompt}]
     content_str = await _call_llm_async(model_name, messages, temperature=0.2, max_tokens=4000)
     content_str = _strip_markdown_json(content_str)
-    resume_data = json.loads(content_str)
+    # Fix common JSON syntax errors caused by unescaped quotes inside values
+    import re
     
+    # Simple heuristic to escape unescaped double quotes inside values
+    # (Matches quotes that are preceded and followed by word characters or spaces, which are likely inside a string)
+    cleaned_str = re.sub(r'(?<=[a-zA-Z0-9 ])"(?=[a-zA-Z0-9 ])', r'\"', content_str)
+    
+    try:
+        resume_data = json.loads(content_str, strict=False)
+    except json.JSONDecodeError as first_err:
+        try:
+            resume_data = json.loads(cleaned_str, strict=False)
+        except json.JSONDecodeError:
+            logger.error(f"Failed to parse PDF JSON: {first_err}\nContent: {content_str}")
+            raise first_err
+            
     # Ensure PROFESSIONAL SUMMARY is always the first section
     sections = resume_data.get("sections", [])
     summary_idx = next(
@@ -586,6 +844,9 @@ Output JSON with sections in this order (PROFESSIONAL SUMMARY is mandatory, ONLY
             text = text.replace(k, v)
             
         import re
+        # Escape < that doesn't start an allowed tag to prevent ReportLab XML parser errors
+        text = re.sub(r'<(?!/?(?:a|font|u|link|b|i|strong|em)\b)', '&lt;', text)
+        
         # 1. Convert markdown links to html links: [text](URL) -> <a href="URL">text</a>
         text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', text)
         
@@ -706,7 +967,7 @@ Output JSON with sections in this order (PROFESSIONAL SUMMARY is mandatory, ONLY
     # Sections
     left_flowables = []
     right_flowables = []
-    left_section_titles = ["PROFESSIONAL SUMMARY", "PROFESSIONAL EXPERIENCE", "PROJECTS", "EXPERIENCE", "SUMMARY"]
+    left_section_titles = ["PROFESSIONAL SUMMARY", "PROFESSIONAL EXPERIENCE", "EXPERIENCE", "SUMMARY"]
     
     for section in resume_data.get("sections", []):
         section_flowables = []
@@ -745,7 +1006,11 @@ Output JSON with sections in this order (PROFESSIONAL SUMMARY is mandatory, ONLY
             section_flowables.append(Spacer(1, 4))
         
         if is_two_col:
-            if title in left_section_titles:
+            # Left column: main content (Summary, Experience, Projects, Training)
+            # Right column: sidebar content (Education, Skills, Certs, Achievements, etc.)
+            left_titles = {"PROFESSIONAL SUMMARY", "PROFESSIONAL EXPERIENCE",
+                           "TRAINING EXPERIENCE", "EXPERIENCE", "SUMMARY", "PROJECTS"}
+            if any(lt in title for lt in left_titles):
                 left_flowables.extend(section_flowables)
             else:
                 right_flowables.extend(section_flowables)
@@ -753,16 +1018,21 @@ Output JSON with sections in this order (PROFESSIONAL SUMMARY is mandatory, ONLY
             story.extend(section_flowables)
     
     if is_two_col:
+        # A4 usable width with 10mm margins each side = 190mm ≈ 539pt
+        # Left (main): ~62% = 334pt, Right (sidebar): ~38% = 185pt, gutter 20pt between
+        LEFT_W = 334
+        RIGHT_W = 185
         table_data = [[left_flowables, right_flowables]]
-        col_widths = [318, 212]
-        t = Table(table_data, colWidths=col_widths)
+        t = Table(table_data, colWidths=[LEFT_W, RIGHT_W])
         t.setStyle(TableStyle([
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("LEFTPADDING", (0, 0), (-1, -1), 0),
             ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (0, 0), 20),
+            ("RIGHTPADDING", (0, 0), (0, 0), 18),   # gutter between columns
+            ("LEFTPADDING", (1, 0), (1, 0), 12),     # sidebar indent
+            ("LINEAFTER", (0, 0), (0, 0), 0.5, colors.HexColor("#cccccc")),  # divider line
         ]))
-        story.append(KeepInFrame(0, 0, [t], mode="shrink"))
+        story.append(KeepInFrame(LEFT_W + RIGHT_W, 820, [t], mode="shrink"))
     
     doc.build(story)
     buffer.seek(0)
