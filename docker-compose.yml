@@ -19,7 +19,7 @@ services:
     ports:
       - "5434:5432"
     volumes:
-      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./backend/database/init.sql:/docker-entrypoint-initdb.d/init.sql
       - postgres_practice_data:/var/lib/postgresql/data
     networks:
       - practice-network
@@ -28,3 +28,23 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: candidate_practice_backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://practice_user:practice_password_2026@practice-db:5432/interview_practice_db
+      # Add other essential backend env variables if they aren't loaded securely from elsewhere. 
+      # Usually docker-compose can use an env_file to pass the rest of the secrets.
+    env_file:
+      - ./backend/.env
+    networks:
+      - practice-network
+    depends_on:
+      practice-db:
+        condition: service_healthy
