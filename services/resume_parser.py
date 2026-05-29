@@ -46,11 +46,12 @@ def _build_prompt() -> str:  # exported for use by background_pipeline shim
         "- Use null for any missing string field.\n"
         "- Use an empty array [] for any missing list field.\n"
         "- Do not add extra keys beyond those listed above.\n"
+        "- PRESERVE LINKS: If the text contains markdown links like [Link Text](URL), you MUST keep the exact markdown link in your string outputs (e.g. for certification names, project links/names, or descriptions).\n"
         "- Output must be valid JSON parseable without any pre-processing."
     )
 
 
 async def parse_resume(raw_text: str) -> ResumeParsedData:
     """Send raw resume text to the LLM and return a validated ResumeParsedData object."""
-    raw_json = await call_openrouter(_build_prompt(), raw_text)
+    raw_json = await call_openrouter(_build_prompt(), raw_text, max_tokens=3000)
     return ResumeParsedData.model_validate_json(raw_json)

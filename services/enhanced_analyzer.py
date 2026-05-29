@@ -17,10 +17,10 @@ logger = logging.getLogger(__name__)
 
 # Model constants — purpose-specific model assignments
 # Gap analysis & ATS scoring (fast, smart analysis)
-MODEL_ANALYSIS = "google/gemini-3-flash-preview"
-# Gap/input refinement and custom additions (large context, high quality rewriting)
+MODEL_ANALYSIS = "openai/gpt-oss-120b"
+# Fast fallback for refinement/PDF generation
 MODEL_REFINE = "openai/gpt-oss-120b"
-# PDF resume generation (large context, precise instruction-following)
+# PDF generator uses a structured JSON output
 MODEL_PDF = "openai/gpt-oss-120b"
 
 
@@ -41,8 +41,7 @@ async def _call_llm_async(model: str, messages: list, temperature: float = 0.2, 
 
     # call_openrouter always sends system + user; pass empty string for system
     # when the prompt is entirely user-side (as is the case for enhanced analysis)
-    limit_tokens = min(max_tokens, 1200)
-    response = await call_openrouter(system_prompt, user_content, model, max_tokens=limit_tokens)
+    response = await call_openrouter(system_prompt, user_content, model, max_tokens=max_tokens)
     return response
 
 
@@ -145,8 +144,8 @@ Return ONLY a valid JSON object with these exact keys:
 - "improvements": List of strings — STRICTLY ONLY terminology/wording mismatches. Where the candidate HAS the skill but uses different words than the JD uses, causing ATS keyword miss.
   FORMAT: "REPLACE '[resume wording]' WITH '[exact JD term] ([resume wording])'"
   DO NOT put missing skills here. If no wording mismatches exist, return []. List ALL terminology mismatches; do not limit the number.
-- "existing_entities": List of strings — EXTRACT all Project names and Company names from the original resume. These will be used for a dropdown. Format: ["Project: [Name]", "Company: [Name]"].
-- "targeted_questions": List of strings (max 3-4) — Ask the candidate for MISSING METRICS (e.g. accuracy, scale, performance) or MISSING CONTEXT regarding tools/skills the JD requires that they might have used in their listed experiences but failed to mention. Example: "The JD requires AWS. Did you use AWS in your role at TechCorp?", "You mentioned creating a model, what was the accuracy or scale?"
+- "existing_entities": List of strings — EXTRACT all Project names and Company names from the original resume. These will be used for a dropdown. Format: ["Project: [Name]", "Company: [Name]"]. STRICT RULE: DO NOT extract Universities, Colleges, Schools, or any educational institutions as "Company". Only extract actual places of employment/work.
+- "targeted_questions": List of strings (max 3-4) — Ask the candidate for PROPER DETAILS and DEEPER CONTEXT regarding skills or experiences that are briefly mentioned in the resume but where the JD requires a deeper understanding. For example, if a skill is mentioned briefly but the JD requires deep knowledge (e.g., "The JD requires advanced SQL for data extraction; you mentioned SQL briefly, can you provide specific data extraction tasks you performed?"). Also, ask about critical context missing from their experiences, such as whether they worked in a team or independently. Crucially, if the JD requires specific necessary details (e.g. scale, specific tools used in a domain, team size) and the resume's company experience section mentions the work but lacks those necessary details, generate a targeted question asking the user to provide them. Do not just ask yes/no questions.
 - "core_strengths": List of 3-5 strings — candidate's strongest JD-aligned qualifications. Use the exact JD terminology where possible.
 - "summary": 2-3 sentence overview of suitability for this specific role.
 
@@ -156,7 +155,9 @@ STRICT RULES:
 - DO NOT INCLUDE EXACT MATCHES in improvements. If the resume already uses the exact JD term (e.g. "Linear Regression" -> "Linear Regression"), it is NOT an improvement. DO NOT INCLUDE IT.
 - DO NOT INCLUDE CASE-ONLY DIFFERENCES. If the only difference between the resume term and the JD term is capitalization (e.g. "Scikit-learn" vs "scikit-learn"), it is NOT an improvement. DO NOT INCLUDE IT.
 - DO NOT INCLUDE SELF-REFERENTIAL REPLACEMENTS. If the replacement would result in the same word appearing twice (e.g. "scikit-learn (Scikit-learn)") where both words mean the same thing, do NOT include it.
+- MUTUAL EXCLUSIVITY FOR GAPS AND QUESTIONS: A topic must NOT appear in both `gaps` and `targeted_questions`. If you are asking a question about missing context for a skill, DO NOT list that skill as a gap. If a skill is entirely missing and listed as a gap, do not ask a question about it.
 - DO NOT MAP UNRELATED CONCEPTS in improvements (e.g. do not map "workflow automation" to "Learning & Development", or "agentic concepts" to "Exploratory Data Analysis"). Only map actual synonymous terms that are truly different words (e.g. "Deep Learning" vs "Neural Networks").
+- DO NOT REDUCE MULTI-SKILLS: If the resume lists multiple related skills together (e.g. "Logistic/Linear Regression"), do NOT replace it with a single JD term if that causes a relevant skill to be lost. You may suggest removing completely random/irrelevant skills that do not fit the role at all, but do not delete valid skills just to match the JD.
 - A valid improvement example: REPLACE 'Scikit' WITH 'scikit-learn' (only if resume says "Scikit" and JD says "scikit-learn").
 - An INVALID improvement: REPLACE 'Scikit-learn' WITH 'scikit-learn (Scikit-learn)' — this is just a capitalization variant of the same term. FORBIDDEN.
 - Do NOT invent metrics or fabricate evidence.
@@ -232,7 +233,7 @@ async def analyze_jd_match(
     )
 
     messages = [{"role": "user", "content": prompt}]
-    result_text = await _call_llm_async(model_name, messages, temperature=0.0, max_tokens=4000)
+    result_text = await _call_llm_async(model_name, messages, temperature=0.0, max_tokens=3000)
     result_text = _strip_markdown_json(result_text)
     return json.loads(result_text, strict=False)
 
@@ -469,7 +470,10 @@ B) For Custom Additions, rewrite them as polished, ATS-friendly resume content l
     Preserve any section prefixes (certificate:, education:, about me:).
    STRICTLY DO NOT add new prefixes or merge distinct sections. Do NOT remove any details provided by the user.
 
-C) TONE & LANGUAGE: Refine descriptions properly and professionally. DO NOT use heavy, overly complex jargon or "fluff" words. Use simple, impactful language that aligns exactly with the terminology from the JD.
+C) TONE, LANGUAGE & KEYWORD INTEGRATION: 
+   - ACTIVELY INCORPORATE exact keywords and terminology from the provided Job Description (JD) into EVERY generated project, rewritten bullet, and custom addition whenever logically possible.
+   - The primary goal is to maximize the resume's ATS match score by using the exact terms the employer is looking for.
+   - Refine descriptions properly and professionally. DO NOT use heavy, overly complex jargon or "fluff" words. Keep it impactful and directly aligned with the JD.
 
 D) HYPERLINKS: If user notes contain URLs, preserve them exactly.
 
@@ -660,6 +664,7 @@ ATS-3. JD TITLE IN SUMMARY: The PROFESSIONAL SUMMARY MUST contain the exact job 
 ATS-4. ACTION VERBS: Start every bullet point with a strong, JD-relevant action verb (Developed, Implemented, Designed, Engineered, Analyzed, Optimized, Built, Deployed, Architected, Leveraged).
 ATS-5. SECTION HEADERS: Use EXACT standard ATS section titles: "PROFESSIONAL SUMMARY", "PROFESSIONAL EXPERIENCE" or "TRAINING EXPERIENCE", "TECHNICAL SKILLS", "EDUCATION", "PROJECTS", "CERTIFICATIONS".
 ATS-6. SKILLS FORMAT: In the TECHNICAL SKILLS section, format as "Category: Skill1, Skill2, Skill3" on separate lines. Add JD-relevant skills the candidate demonstrably has based on their project/experience evidence.
+ATS-7. SOFT SKILLS INTEGRATION: Identify any soft skills mentioned in the target JD (e.g., leadership, communication, problem-solving, teamwork, adaptability). You MUST organically integrate these soft skills into the candidate's PROFESSIONAL EXPERIENCE, PROJECTS, or PROFESSIONAL SUMMARY sections, adapting them to match the candidate's existing context and achievements.
 
 Instructions:
 1. GAP CONTENT PLACEMENT (CRITICAL — this directly determines your ATS score improvement):
@@ -782,7 +787,7 @@ Output JSON with sections in this order (PROFESSIONAL SUMMARY is mandatory, ONLY
 """
     
     messages = [{"role": "user", "content": prompt}]
-    content_str = await _call_llm_async(model_name, messages, temperature=0.2, max_tokens=4000)
+    content_str = await _call_llm_async(model_name, messages, temperature=0.2, max_tokens=3000)
     content_str = _strip_markdown_json(content_str)
     # Fix common JSON syntax errors caused by unescaped quotes inside values
     import re
