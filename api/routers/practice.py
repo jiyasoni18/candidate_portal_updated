@@ -865,7 +865,7 @@ async def refine_custom_additions_endpoint(
                     "Failed to refine custom additions for session %s: %s", session_id, exc
                 )
                 raise HTTPException(
-                    status_code=500, detail="Failed to refine custom additions."
+                    status_code=500, detail=f"Failed to refine custom additions"
                 ) from exc
         else:
             refined = {"gaps": {}, "custom": ""}
