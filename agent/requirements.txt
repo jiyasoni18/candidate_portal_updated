@@ -1,0 +1,11 @@
+livekit==1.1.8
+livekit-agents==1.5.13
+livekit-api==1.1.0
+livekit-blingfire==1.1.0
+livekit-plugins-deepgram==1.5.13
+livekit-plugins-openai==1.5.13
+livekit-plugins-sarvam==1.5.13
+livekit-plugins-silero==1.5.13
+livekit-protocol==1.1.9
+python-dotenv
+httpx
