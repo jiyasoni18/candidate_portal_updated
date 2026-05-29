@@ -13,6 +13,24 @@ venv/
 dist/
 build/
 
+# Node.js
+node_modules/
+.next/
+out/
+coverage/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Frontend env
+frontend/.env
+frontend/.env.local
+frontend/node_modules/
+
+# Mac
+.DS_Store
+
 # Storage
 storage/
 
@@ -24,3 +42,4 @@ htmlcov/
 # IDE
 .vscode/
 .idea/
+.kiro/
