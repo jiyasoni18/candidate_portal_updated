@@ -56,8 +56,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Config — use settings for BACKEND_URL so it picks up .env correctly
 # ---------------------------------------------------------------------------
-from config import settings
-BACKEND_URL = settings.BACKEND_URL
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 
 
 # ---------------------------------------------------------------------------
