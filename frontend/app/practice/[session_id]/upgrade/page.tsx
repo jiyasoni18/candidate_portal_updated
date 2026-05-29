@@ -143,17 +143,19 @@ function ScoreComparisonBanner({
   session,
   selectedImprovementsCount,
   addressedGapsCount,
+  totalGapsCount,
 }: {
   session: SessionDetail;
   selectedImprovementsCount: number;
   addressedGapsCount: number;
+  totalGapsCount?: number;
 }) {
   const ea = session.enhanced_analysis;
   const origMatch = ea?.match_score ?? null;
   const origAts = ea?.ats_score ?? null;
 
   const totalImprovements = ea?.improvements?.length || 0;
-  const totalGaps = ea?.gaps?.length || 0;
+  const totalGaps = totalGapsCount ?? (ea?.gaps?.length || 0);
 
   // Projected score: purely proportional to actions taken
   // ATS: each terminology improvement checked = proportional share of missing ATS points
@@ -220,67 +222,96 @@ function SmartGapCard({
       </div>
 
       <div className="p-4 space-y-3">
-        <div className="flex items-center gap-3 bg-slate-900/50 p-3 rounded-lg border border-slate-700/50">
-          <span className="text-sm text-zinc-400 shrink-0">Do you have any knowledge of this?</span>
-          <div className="flex flex-wrap gap-4 ml-auto">
-            <label className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-              <input type="radio" name={`skill-exp-${index}`} className="accent-indigo-500"
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 bg-slate-900/60 p-4 rounded-xl border border-slate-700/50 shadow-inner">
+          <span className="text-sm font-medium text-zinc-300 shrink-0">Do you have any knowledge of this?</span>
+          <div className="flex flex-wrap gap-3 sm:ml-auto">
+            <label className={`group relative flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-colors ${answer.hasExperience === true ? "bg-indigo-500/10" : "hover:bg-slate-800"}`}>
+              <input type="radio" name={`skill-exp-${index}`} className="peer sr-only"
                 checked={answer.hasExperience === true}
                 onChange={() => update({ hasExperience: true, placementMode: 'project_or_exp', projectType: 'existing', generateProject: false })} />
-              Yes
+              <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center transition-all ${answer.hasExperience === true ? "border-indigo-400" : "border-slate-500 group-hover:border-indigo-400"}`}>
+                <div className={`w-2 h-2 rounded-full bg-indigo-400 transition-transform ${answer.hasExperience === true ? "scale-100" : "scale-0"}`} />
+              </div>
+              <span className={`text-sm font-medium transition-colors ${answer.hasExperience === true ? "text-indigo-300" : "text-zinc-400 group-hover:text-zinc-200"}`}>Yes</span>
             </label>
-            <label className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-              <input type="radio" name={`skill-exp-${index}`} className="accent-indigo-500"
+            <label className={`group relative flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-colors ${answer.hasExperience === false ? "bg-indigo-500/10" : "hover:bg-slate-800"}`}>
+              <input type="radio" name={`skill-exp-${index}`} className="peer sr-only"
                 checked={answer.hasExperience === false}
                 onChange={() => update({ hasExperience: false, skillNote: "", attachToExisting: "" })} />
-              No
+              <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center transition-all ${answer.hasExperience === false ? "border-indigo-400" : "border-slate-500 group-hover:border-indigo-400"}`}>
+                <div className={`w-2 h-2 rounded-full bg-indigo-400 transition-transform ${answer.hasExperience === false ? "scale-100" : "scale-0"}`} />
+              </div>
+              <span className={`text-sm font-medium transition-colors ${answer.hasExperience === false ? "text-indigo-300" : "text-zinc-400 group-hover:text-zinc-200"}`}>No</span>
             </label>
-            <label className="flex items-center gap-2 text-sm text-emerald-400 font-medium cursor-pointer">
-              <input type="radio" name={`skill-exp-${index}`} className="accent-emerald-500"
+            <label className={`group relative flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-colors ${answer.hasExperience === 'ai_generate' ? "bg-emerald-500/10 ring-1 ring-emerald-500/30" : "hover:bg-slate-800"}`}>
+              <input type="radio" name={`skill-exp-${index}`} className="peer sr-only"
                 checked={answer.hasExperience === 'ai_generate'}
                 onChange={() => update({ hasExperience: 'ai_generate', generateProject: true })} />
-              ✨ Generate Project with AI
+              <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center transition-all ${answer.hasExperience === 'ai_generate' ? "border-emerald-400" : "border-slate-500 group-hover:border-emerald-400"}`}>
+                <div className={`w-2 h-2 rounded-full bg-emerald-400 transition-transform ${answer.hasExperience === 'ai_generate' ? "scale-100" : "scale-0"}`} />
+              </div>
+              <span className={`text-sm font-medium transition-colors ${answer.hasExperience === 'ai_generate' ? "text-emerald-400" : "text-emerald-500/70 group-hover:text-emerald-400"}`}>✨ Generate Project</span>
             </label>
           </div>
         </div>
 
         {answer.hasExperience === true && (
-          <div className="space-y-4 pt-2">
+          <div className="space-y-4 pt-2 animate-in fade-in slide-in-from-top-2 duration-300">
             
             {/* 1. Placement Selection */}
-            <div className="bg-slate-900/60 border border-slate-700/50 rounded-lg p-3 space-y-3">
-              <p className="text-xs text-zinc-400 font-medium">Where should we place this on your resume?</p>
+            <div className="bg-slate-900/60 border border-slate-700/50 rounded-xl p-4 space-y-4 shadow-sm">
+              <p className="text-xs text-zinc-400 font-semibold uppercase tracking-wider">Placement Configuration</p>
               
               <div className="flex flex-col gap-3">
                 <div className="flex flex-wrap gap-4">
-                  <label className="flex items-center gap-1.5 text-sm text-zinc-300 cursor-pointer">
-                    <input type="radio" name={`place-mode-${index}`} className="accent-indigo-500"
-                      checked={answer.placementMode === 'summary'} 
-                      onChange={() => update({ placementMode: 'summary' })} /> 
-                    Add to Summary
+                  <label className={`group flex items-center gap-2 cursor-pointer p-2 -m-2 rounded-lg transition-colors ${answer.placementMode === 'summary' ? "bg-indigo-500/5" : "hover:bg-slate-800/50"}`}>
+                    <div className="relative flex items-center justify-center w-4 h-4">
+                      <input type="radio" name={`place-mode-${index}`} className="peer sr-only"
+                        checked={answer.placementMode === 'summary'} 
+                        onChange={() => update({ placementMode: 'summary' })} />
+                      <div className={`w-full h-full rounded-full border-2 flex items-center justify-center transition-all ${answer.placementMode === 'summary' ? "border-indigo-400" : "border-slate-500 group-hover:border-indigo-400"}`}>
+                        <div className={`w-2 h-2 rounded-full bg-indigo-400 transition-transform ${answer.placementMode === 'summary' ? "scale-100" : "scale-0"}`} />
+                      </div>
+                    </div>
+                    <span className={`text-sm transition-colors ${answer.placementMode === 'summary' ? "text-indigo-300 font-medium" : "text-zinc-300"}`}>Add to Summary</span>
                   </label>
-                  <label className="flex items-center gap-1.5 text-sm text-zinc-300 cursor-pointer">
-                    <input type="radio" name={`place-mode-${index}`} className="accent-indigo-500"
-                      checked={!answer.placementMode || answer.placementMode === 'project_or_exp'} 
-                      onChange={() => update({ placementMode: 'project_or_exp', projectType: answer.projectType || 'existing' })} /> 
-                    Add to Skills / Projects
+                  <label className={`group flex items-center gap-2 cursor-pointer p-2 -m-2 rounded-lg transition-colors ${(!answer.placementMode || answer.placementMode === 'project_or_exp') ? "bg-indigo-500/5" : "hover:bg-slate-800/50"}`}>
+                    <div className="relative flex items-center justify-center w-4 h-4">
+                      <input type="radio" name={`place-mode-${index}`} className="peer sr-only"
+                        checked={!answer.placementMode || answer.placementMode === 'project_or_exp'} 
+                        onChange={() => update({ placementMode: 'project_or_exp', projectType: answer.projectType || 'existing' })} />
+                      <div className={`w-full h-full rounded-full border-2 flex items-center justify-center transition-all ${(!answer.placementMode || answer.placementMode === 'project_or_exp') ? "border-indigo-400" : "border-slate-500 group-hover:border-indigo-400"}`}>
+                        <div className={`w-2 h-2 rounded-full bg-indigo-400 transition-transform ${(!answer.placementMode || answer.placementMode === 'project_or_exp') ? "scale-100" : "scale-0"}`} />
+                      </div>
+                    </div>
+                    <span className={`text-sm transition-colors ${(!answer.placementMode || answer.placementMode === 'project_or_exp') ? "text-indigo-300 font-medium" : "text-zinc-300"}`}>Add to Skills / Projects</span>
                   </label>
                 </div>
 
                 {(!answer.placementMode || answer.placementMode === 'project_or_exp') && (
-                  <div className="pl-6 space-y-3 border-l-2 border-slate-700/50 mt-1 pt-1">
-                    <div className="flex flex-wrap items-center gap-4">
-                      <label className="flex items-center gap-1.5 text-sm text-zinc-300 cursor-pointer">
-                        <input type="radio" name={`proj-type-${index}`} className="accent-indigo-500"
-                          checked={!answer.projectType || answer.projectType === 'existing' || answer.projectType === 'skill'} 
-                          onChange={() => update({ projectType: 'existing', generateProject: false })} /> 
-                        Existing Project / Job
+                  <div className="pl-6 space-y-3 border-l-2 border-indigo-500/20 mt-1 pt-2 animate-in fade-in slide-in-from-left-2 duration-300">
+                    <div className="flex flex-wrap items-center gap-5">
+                      <label className={`group flex items-center gap-2 cursor-pointer p-1.5 -m-1.5 rounded-lg transition-colors ${(!answer.projectType || answer.projectType === 'existing' || answer.projectType === 'skill') ? "" : "hover:bg-slate-800/50"}`}>
+                        <div className="relative flex items-center justify-center w-3.5 h-3.5">
+                          <input type="radio" name={`proj-type-${index}`} className="peer sr-only"
+                            checked={!answer.projectType || answer.projectType === 'existing' || answer.projectType === 'skill'} 
+                            onChange={() => update({ projectType: 'existing', generateProject: false })} />
+                          <div className={`w-full h-full rounded-full border-2 flex items-center justify-center transition-all ${(!answer.projectType || answer.projectType === 'existing' || answer.projectType === 'skill') ? "border-indigo-400" : "border-slate-500 group-hover:border-indigo-400"}`}>
+                            <div className={`w-1.5 h-1.5 rounded-full bg-indigo-400 transition-transform ${(!answer.projectType || answer.projectType === 'existing' || answer.projectType === 'skill') ? "scale-100" : "scale-0"}`} />
+                          </div>
+                        </div>
+                        <span className={`text-xs transition-colors ${(!answer.projectType || answer.projectType === 'existing' || answer.projectType === 'skill') ? "text-indigo-300 font-medium" : "text-zinc-400 group-hover:text-zinc-300"}`}>Existing Project / Job</span>
                       </label>
-                      <label className="flex items-center gap-1.5 text-sm text-zinc-300 cursor-pointer">
-                        <input type="radio" name={`proj-type-${index}`} className="accent-indigo-500"
-                          checked={answer.projectType === 'new'} 
-                          onChange={() => update({ projectType: 'new' })} /> 
-                        New Project
+                      <label className={`group flex items-center gap-2 cursor-pointer p-1.5 -m-1.5 rounded-lg transition-colors ${answer.projectType === 'new' ? "" : "hover:bg-slate-800/50"}`}>
+                        <div className="relative flex items-center justify-center w-3.5 h-3.5">
+                          <input type="radio" name={`proj-type-${index}`} className="peer sr-only"
+                            checked={answer.projectType === 'new'} 
+                            onChange={() => update({ projectType: 'new' })} />
+                          <div className={`w-full h-full rounded-full border-2 flex items-center justify-center transition-all ${answer.projectType === 'new' ? "border-indigo-400" : "border-slate-500 group-hover:border-indigo-400"}`}>
+                            <div className={`w-1.5 h-1.5 rounded-full bg-indigo-400 transition-transform ${answer.projectType === 'new' ? "scale-100" : "scale-0"}`} />
+                          </div>
+                        </div>
+                        <span className={`text-xs transition-colors ${answer.projectType === 'new' ? "text-indigo-300 font-medium" : "text-zinc-400 group-hover:text-zinc-300"}`}>New Project</span>
                       </label>
                     </div>
                   </div>
@@ -626,23 +657,38 @@ function OptimizationsList({
           </p>
         </div>
       </div>
-      <div className="space-y-2">
-        <label className={`flex items-start gap-3 rounded-xl p-4 cursor-pointer border transition-colors ${optimizeProjects ? "bg-indigo-600/10 border-indigo-500/40" : "bg-slate-800/50 border-slate-700 hover:border-indigo-500/30"}`}>
-          <input type="checkbox" checked={optimizeProjects} onChange={(e) => setOptimizeProjects(e.target.checked)} className="mt-0.5 accent-indigo-500 shrink-0 w-4 h-4" />
+      <div className="space-y-3">
+        <label className={`group flex items-center gap-4 rounded-2xl p-4 cursor-pointer border transition-all duration-300 ease-out ${optimizeProjects ? "bg-indigo-500/10 border-indigo-500/50 shadow-[0_0_15px_rgba(99,102,241,0.1)]" : "bg-slate-800/40 border-slate-700/60 hover:bg-slate-800/80 hover:border-indigo-500/30"}`}>
+          <div className="relative flex items-center justify-center shrink-0 w-6 h-6">
+            <input type="checkbox" checked={optimizeProjects} onChange={(e) => setOptimizeProjects(e.target.checked)} className="peer sr-only" />
+            <div className={`w-full h-full rounded-md border-2 flex items-center justify-center transition-all duration-300 ${optimizeProjects ? "bg-indigo-500 border-indigo-500" : "border-slate-600 group-hover:border-indigo-400/50"}`}>
+              <svg className={`w-3.5 h-3.5 text-white transition-transform duration-300 ${optimizeProjects ? "scale-100" : "scale-0"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+            </div>
+          </div>
           <div className="flex-1 min-w-0">
-            <span className="text-zinc-300 text-sm leading-relaxed block">Optimize wording in your <b>Projects</b> section</span>
+            <span className={`text-sm leading-relaxed block transition-colors ${optimizeProjects ? "text-indigo-100" : "text-zinc-300"}`}>Optimize wording in your <b>Projects</b> section</span>
           </div>
         </label>
-        <label className={`flex items-start gap-3 rounded-xl p-4 cursor-pointer border transition-colors ${optimizeExperience ? "bg-indigo-600/10 border-indigo-500/40" : "bg-slate-800/50 border-slate-700 hover:border-indigo-500/30"}`}>
-          <input type="checkbox" checked={optimizeExperience} onChange={(e) => setOptimizeExperience(e.target.checked)} className="mt-0.5 accent-indigo-500 shrink-0 w-4 h-4" />
+        <label className={`group flex items-center gap-4 rounded-2xl p-4 cursor-pointer border transition-all duration-300 ease-out ${optimizeExperience ? "bg-indigo-500/10 border-indigo-500/50 shadow-[0_0_15px_rgba(99,102,241,0.1)]" : "bg-slate-800/40 border-slate-700/60 hover:bg-slate-800/80 hover:border-indigo-500/30"}`}>
+          <div className="relative flex items-center justify-center shrink-0 w-6 h-6">
+            <input type="checkbox" checked={optimizeExperience} onChange={(e) => setOptimizeExperience(e.target.checked)} className="peer sr-only" />
+            <div className={`w-full h-full rounded-md border-2 flex items-center justify-center transition-all duration-300 ${optimizeExperience ? "bg-indigo-500 border-indigo-500" : "border-slate-600 group-hover:border-indigo-400/50"}`}>
+              <svg className={`w-3.5 h-3.5 text-white transition-transform duration-300 ${optimizeExperience ? "scale-100" : "scale-0"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+            </div>
+          </div>
           <div className="flex-1 min-w-0">
-            <span className="text-zinc-300 text-sm leading-relaxed block">Optimize wording in your <b>Experience</b> section</span>
+            <span className={`text-sm leading-relaxed block transition-colors ${optimizeExperience ? "text-indigo-100" : "text-zinc-300"}`}>Optimize wording in your <b>Experience</b> section</span>
           </div>
         </label>
-        <label className={`flex items-start gap-3 rounded-xl p-4 cursor-pointer border transition-colors ${optimizeSummary ? "bg-indigo-600/10 border-indigo-500/40" : "bg-slate-800/50 border-slate-700 hover:border-indigo-500/30"}`}>
-          <input type="checkbox" checked={optimizeSummary} onChange={(e) => setOptimizeSummary(e.target.checked)} className="mt-0.5 accent-indigo-500 shrink-0 w-4 h-4" />
+        <label className={`group flex items-center gap-4 rounded-2xl p-4 cursor-pointer border transition-all duration-300 ease-out ${optimizeSummary ? "bg-indigo-500/10 border-indigo-500/50 shadow-[0_0_15px_rgba(99,102,241,0.1)]" : "bg-slate-800/40 border-slate-700/60 hover:bg-slate-800/80 hover:border-indigo-500/30"}`}>
+          <div className="relative flex items-center justify-center shrink-0 w-6 h-6">
+            <input type="checkbox" checked={optimizeSummary} onChange={(e) => setOptimizeSummary(e.target.checked)} className="peer sr-only" />
+            <div className={`w-full h-full rounded-md border-2 flex items-center justify-center transition-all duration-300 ${optimizeSummary ? "bg-indigo-500 border-indigo-500" : "border-slate-600 group-hover:border-indigo-400/50"}`}>
+              <svg className={`w-3.5 h-3.5 text-white transition-transform duration-300 ${optimizeSummary ? "scale-100" : "scale-0"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+            </div>
+          </div>
           <div className="flex-1 min-w-0">
-            <span className="text-zinc-300 text-sm leading-relaxed block">Optimize wording in your <b>Professional Summary</b></span>
+            <span className={`text-sm leading-relaxed block transition-colors ${optimizeSummary ? "text-indigo-100" : "text-zinc-300"}`}>Optimize wording in your <b>Professional Summary</b></span>
           </div>
         </label>
       </div>
@@ -650,7 +696,48 @@ function OptimizationsList({
   );
 }
 
-// Dummy ImprovementsList removed
+function ImprovementsList({
+  improvements,
+  selectedImprovements,
+  onToggle,
+}: {
+  improvements: string[];
+  selectedImprovements: Set<number>;
+  onToggle: (index: number) => void;
+}) {
+  if (!improvements || improvements.length === 0) return null;
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <h2 className="text-zinc-100 font-semibold text-base">Specific Improvements</h2>
+          <p className="text-zinc-500 text-xs mt-0.5">
+            Select the specific wording improvements you'd like the AI to apply to your resume.
+          </p>
+        </div>
+      </div>
+      <div className="space-y-3">
+        {improvements.map((improvement, i) => {
+          const isSelected = selectedImprovements.has(i);
+          return (
+            <label key={i} className={`group flex items-start gap-4 rounded-2xl p-4 cursor-pointer border transition-all duration-300 ease-out ${isSelected ? "bg-indigo-500/10 border-indigo-500/50 shadow-[0_0_15px_rgba(99,102,241,0.1)]" : "bg-slate-800/40 border-slate-700/60 hover:bg-slate-800/80 hover:border-indigo-500/30"}`}>
+              <div className="relative flex items-center justify-center shrink-0 w-6 h-6 mt-0.5">
+                <input type="checkbox" checked={isSelected} onChange={() => onToggle(i)} className="peer sr-only" />
+                <div className={`w-full h-full rounded-md border-2 flex items-center justify-center transition-all duration-300 ${isSelected ? "bg-indigo-500 border-indigo-500" : "border-slate-600 group-hover:border-indigo-400/50"}`}>
+                  <svg className={`w-3.5 h-3.5 text-white transition-transform duration-300 ${isSelected ? "scale-100" : "scale-0"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                </div>
+              </div>
+              <div className="flex-1 min-w-0">
+                <span className={`text-sm leading-relaxed block transition-colors ${isSelected ? "text-indigo-100" : "text-zinc-300"}`}>{improvement}</span>
+              </div>
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── CustomAdditionsField ──────────────────────────────────────────────────────
 
 function CustomAdditionsField({
@@ -835,6 +922,51 @@ function RefinedItemCard({
   );
 }
 
+function WizardStepper({ currentStep, onStepClick }: { currentStep: number, onStepClick?: (step: number) => void }) {
+  const steps = [
+    { num: 1, label: "Add Context" },
+    { num: 2, label: "Address Gaps" },
+    { num: 3, label: "Review & Generate" }
+  ];
+
+  return (
+    <div className="flex items-center justify-center w-full mb-8 relative px-4">
+      <div className="absolute left-8 right-8 top-1/2 h-px bg-slate-800 -z-10 transform -translate-y-1/2 max-w-lg mx-auto" />
+      <div className="flex justify-between w-full max-w-lg mx-auto relative z-10">
+        {steps.map((step) => {
+          const isCurrent = currentStep === step.num;
+          const isPast = currentStep > step.num;
+          return (
+            <button
+              key={step.num}
+              onClick={() => {
+                if (isPast && onStepClick) onStepClick(step.num);
+              }}
+              disabled={!isPast && !isCurrent}
+              className={`flex flex-col items-center gap-2.5 bg-slate-950 px-2 outline-none ${isPast ? "cursor-pointer hover:opacity-80" : "cursor-default"}`}
+            >
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold border-2 transition-all duration-300 ${
+                isCurrent ? "bg-indigo-600 border-indigo-500 text-white shadow-[0_0_15px_rgba(99,102,241,0.4)] scale-110" :
+                isPast ? "bg-emerald-500/10 border-emerald-500/50 text-emerald-400" :
+                "bg-slate-900 border-slate-800 text-slate-500"
+              }`}>
+                {isPast ? <TrendingUp size={14} className="text-emerald-400" /> : step.num}
+              </div>
+              <span className={`text-[11px] uppercase tracking-wider font-semibold transition-colors ${
+                isCurrent ? "text-indigo-300" :
+                isPast ? "text-emerald-500/70" :
+                "text-slate-600"
+              }`}>
+                {step.label}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function ResumeUpgradeWizardPage({
@@ -904,12 +1036,13 @@ export default function ResumeUpgradeWizardPage({
     fetchSession(session_id)
       .then((data) => {
         setSession(data);
-        // Initialize gap answers (skill mode only)
+        // Initialize gap answers (skill mode only) for both normal gaps and targeted questions
         const gaps = data.enhanced_analysis?.gaps ?? [];
+        const qs = data.enhanced_analysis?.targeted_questions ?? [];
         const initial: Record<number, GapAnswer> = {};
-        gaps.forEach((_gap: string, i: number) => {
+        for (let i = 0; i < gaps.length + qs.length; i++) {
           initial[i] = { mode: "skill", hasExperience: false };
-        });
+        }
         setGapAnswers(initial);
         setSelectedImprovements(new Set());
       })
@@ -964,6 +1097,15 @@ export default function ResumeUpgradeWizardPage({
     try {
       const result = await reanalyzeGaps(session_id, combinedCustom);
       const newRemainingGaps = new Set(result.remaining_gaps);
+
+      // Add unanswered targeted questions to remaining gaps
+      const tq = session?.enhanced_analysis?.targeted_questions ?? [];
+      tq.forEach(q => {
+        if (!targetedAnswers[q] || targetedAnswers[q].trim().length < 5) {
+          newRemainingGaps.add(q);
+        }
+      });
+
       lastReanalyzedCustom.current = combinedCustom;
       lastReanalyzeResult.current = newRemainingGaps;
       setRemainingGaps(newRemainingGaps);
@@ -982,7 +1124,10 @@ export default function ResumeUpgradeWizardPage({
     setRefineError(null);
 
     try {
-      const gaps = session.enhanced_analysis?.gaps ?? [];
+      const gaps = [
+        ...(session.enhanced_analysis?.gaps ?? []),
+        ...(session.enhanced_analysis?.targeted_questions ?? [])
+      ];
       const activeSet = overrideGapsSet ?? remainingGaps;
       const activeGapsIndices = gaps
         .map((gap: string, i: number) => (activeSet === null || activeSet.has(gap) ? i : -1))
@@ -1182,7 +1327,10 @@ export default function ResumeUpgradeWizardPage({
     );
   }
 
-  const allGaps = session?.enhanced_analysis?.gaps ?? [];
+  const allGaps = [
+    ...(session?.enhanced_analysis?.gaps ?? []),
+    ...(session?.enhanced_analysis?.targeted_questions ?? [])
+  ];
   const activeGapsIndices = allGaps
     .map((gap: string, i: number) => (remainingGaps === null || remainingGaps.has(gap) ? i : -1))
     .filter((i: number) => i !== -1);
@@ -1194,6 +1342,8 @@ export default function ResumeUpgradeWizardPage({
           <Link href={`/practice/${session_id}`} className="text-zinc-500 hover:text-indigo-400 text-sm font-medium transition-colors mb-6 inline-block">
             ← Back to Dashboard
           </Link>
+
+          <WizardStepper currentStep={wizardStep} onStepClick={(step) => setWizardStep(step as 1|2|3)} />
           
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl relative overflow-hidden">
             {session && (
@@ -1201,9 +1351,11 @@ export default function ResumeUpgradeWizardPage({
                 <ScoreComparisonBanner 
                   session={session} 
                   selectedImprovementsCount={selectedImprovements.size}
+                  totalGapsCount={allGaps.length}
                   addressedGapsCount={
                     wizardStep === 1 
-                      ? standaloneExperiences.length + standaloneProjects.length 
+                      ? standaloneExperiences.filter(e => e.company.trim() || e.description.trim()).length + 
+                        standaloneProjects.filter(p => p.name.trim() || p.description.trim() || p.tech.trim()).length 
                       : (allGaps.length - activeGapsIndices.length) + Object.values(gapAnswers).filter((ans) => {
                           if (!ans) return false;
                           if (ans.generateProject) return true;
@@ -1257,6 +1409,12 @@ export default function ResumeUpgradeWizardPage({
                   </div>
                 )}
 
+                <ImprovementsList
+                  improvements={session?.enhanced_analysis?.improvements ?? []}
+                  selectedImprovements={selectedImprovements}
+                  onToggle={handleToggleImprovement}
+                />
+                
                 <OptimizationsList 
                   optimizeProjects={optimizeProjects} setOptimizeProjects={setOptimizeProjects}
                   optimizeExperience={optimizeExperience} setOptimizeExperience={setOptimizeExperience}
@@ -1335,108 +1493,110 @@ export default function ResumeUpgradeWizardPage({
   // ── Step 3: Refinement Review ──────────────────────────────────────────────
   const gapEntries = Object.entries(refinedGaps);
   return (
-    <main className="min-h-screen bg-slate-900 text-zinc-100">
-      {/* Top nav */}
-      <div className="border-b border-slate-800 px-6 py-3 flex items-center justify-between">
-        <div>
-          <span className="text-sm font-semibold text-zinc-100">Resume Upgrade Wizard</span>
-          <p className="text-zinc-500 text-xs mt-0.5">
-            Review each refined item and approve or reject before generating
-          </p>
-        </div>
-        <button
-          onClick={() => setWizardStep(2)}
-          className="px-3 py-1.5 text-xs rounded-lg bg-slate-800 hover:bg-slate-700 text-zinc-400 border border-slate-700 transition-colors"
-        >
-          ← Back to Inputs
-        </button>
-      </div>
-
-      <div className="max-w-3xl mx-auto px-6 py-8 space-y-10">
-        {/* Score comparison banner */}
-        <ScoreComparisonBanner 
-          session={session!} 
-          selectedImprovementsCount={selectedImprovements.size}
-          addressedGapsCount={Object.keys(refinedGaps).filter(key => approvedGaps[key] !== false).length}
-        />
-
-        {/* Refined gap paragraphs */}
-        {gapEntries.length > 0 && (
-          <div>
-            <h2 className="text-zinc-100 font-semibold text-base mb-1">Refined Gap Responses</h2>
-            <p className="text-zinc-500 text-xs mb-4">
-              Review each AI-refined paragraph and approve or reject it.
-            </p>
-            <div className="space-y-4">
-              {gapEntries.map(([key, content]) => {
-                const gapIndex = parseInt(key, 10);
-                const label = allGaps[gapIndex] ?? `Gap ${gapIndex + 1}`;
-                return (
-                  <RefinedItemCard
-                    key={key}
-                    label={label}
-                    content={content}
-                    approved={approvedGaps[key] ?? null}
-                    onApprove={() =>
-                      setApprovedGaps((prev) => ({ ...prev, [key]: true }))
-                    }
-                    onReject={() =>
-                      setApprovedGaps((prev) => ({ ...prev, [key]: false }))
-                    }
-                  />
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Refined Custom Additions */}
-        {refinedCustomItems.length > 0 && (
-          <div>
-            <h2 className="text-zinc-100 font-semibold text-base mb-1">Refined Projects & Experiences</h2>
-            <p className="text-zinc-500 text-xs mb-4">
-              Review your new projects and experiences, expertly polished to match JD keywords.
-            </p>
-            <div className="space-y-4">
-              {refinedCustomItems.map((content, i) => {
-                return (
-                  <RefinedItemCard
-                    key={i}
-                    label={`Custom Addition ${i + 1}`}
-                    content={content}
-                    approved={approvedCustomItems[i] ?? null}
-                    onApprove={() =>
-                      setApprovedCustomItems((prev) => ({ ...prev, [i]: true }))
-                    }
-                    onReject={() =>
-                      setApprovedCustomItems((prev) => ({ ...prev, [i]: false }))
-                    }
-                  />
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Template picker */}
-        <TemplatePicker selected={selectedTemplate} onSelect={setSelectedTemplate} />
-
-        {/* Generate button */}
-        <div className="pb-8">
-          {generateError && (
-            <p className="text-red-400 text-sm mb-4 bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3 text-center">
-              {generateError}
-            </p>
-          )}
+    <div className="min-h-screen bg-slate-950 text-slate-200 selection:bg-indigo-500/30 flex flex-col items-center py-12 px-6">
+      <div className="w-full max-w-4xl space-y-6">
+        <div className="flex items-center justify-between mb-6">
+          <Link href={`/practice/${session_id}`} className="text-zinc-500 hover:text-indigo-400 text-sm font-medium transition-colors inline-block">
+            ← Back to Dashboard
+          </Link>
           <button
-            onClick={handleGenerate}
-            disabled={isGenerating}
-            className="w-full py-4 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl transition-all shadow-lg shadow-indigo-500/25 flex items-center justify-center gap-2 text-lg"
+            onClick={() => setWizardStep(2)}
+            className="px-4 py-2 text-xs rounded-lg bg-slate-800 hover:bg-slate-700 text-zinc-400 border border-slate-700 transition-colors"
           >
-            {isGenerating ? "Generating PDF..." : "Generate ATS-Optimized Resume ✨"}
+            ← Revise Inputs
           </button>
         </div>
+
+        <WizardStepper currentStep={3} />
+        
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl relative overflow-hidden space-y-10">
+          
+          <div>
+            <h1 className="text-3xl font-bold text-white mb-2 max-w-lg">Review & Generate</h1>
+            <p className="text-slate-400 mb-8 max-w-xl">
+              Review each AI-refined item. Approve or reject before generating the final PDF.
+            </p>
+          </div>
+
+          <ScoreComparisonBanner 
+            session={session!} 
+            selectedImprovementsCount={selectedImprovements.size}
+            totalGapsCount={allGaps.length}
+            addressedGapsCount={Object.keys(refinedGaps).filter(key => approvedGaps[key] !== false).length}
+          />
+
+          {/* Refined gap paragraphs */}
+          {gapEntries.length > 0 && (
+            <div>
+              <h2 className="text-zinc-100 font-semibold text-base mb-1">Refined Gap Responses</h2>
+              <div className="space-y-4 mt-4">
+                {gapEntries.map(([key, content]) => {
+                  const gapIndex = parseInt(key, 10);
+                  const label = allGaps[gapIndex] ?? `Gap ${gapIndex + 1}`;
+                  return (
+                    <RefinedItemCard
+                      key={key}
+                      label={label}
+                      content={content}
+                      approved={approvedGaps[key] ?? null}
+                      onApprove={() =>
+                        setApprovedGaps((prev) => ({ ...prev, [key]: true }))
+                      }
+                      onReject={() =>
+                        setApprovedGaps((prev) => ({ ...prev, [key]: false }))
+                      }
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Refined Custom Additions */}
+          {refinedCustomItems.length > 0 && (
+            <div>
+              <h2 className="text-zinc-100 font-semibold text-base mb-1">Refined Projects & Experiences</h2>
+              <div className="space-y-4 mt-4">
+                {refinedCustomItems.map((content, i) => {
+                  return (
+                    <RefinedItemCard
+                      key={i}
+                      label={`Custom Addition ${i + 1}`}
+                      content={content}
+                      approved={approvedCustomItems[i] ?? null}
+                      onApprove={() =>
+                        setApprovedCustomItems((prev) => ({ ...prev, [i]: true }))
+                      }
+                      onReject={() =>
+                        setApprovedCustomItems((prev) => ({ ...prev, [i]: false }))
+                      }
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Template picker */}
+          <TemplatePicker selected={selectedTemplate} onSelect={setSelectedTemplate} />
+
+          {/* Generate button */}
+          <div className="pb-4">
+            {generateError && (
+              <p className="text-red-400 text-sm mb-4 bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3 text-center">
+                {generateError}
+              </p>
+            )}
+            <button
+              onClick={handleGenerate}
+              disabled={isGenerating}
+              className="w-full py-4 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl transition-all shadow-lg shadow-indigo-500/25 flex items-center justify-center gap-2 text-lg"
+            >
+              {isGenerating ? "Generating PDF..." : "Generate ATS-Optimized Resume ✨"}
+            </button>
+          </div>
+        </div>
       </div>
-    </main>
+    </div>
   );
 }
