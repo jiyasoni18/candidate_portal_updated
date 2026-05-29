@@ -11,7 +11,7 @@ from io import BytesIO
 # ─────────────────────────────────────────────────────────────────────────────
 MODEL_PARSER_PRIMARY  = "openai/gpt-oss-120b"     # GPT-OSS 120B – parsing & cleaning
 MODEL_PARSER_FALLBACK = "openai/gpt-oss-20b"      # GPT-OSS 20B  – fallback when 402/429
-MODEL_ANALYSIS        = "google/gemini-3-flash-preview"  # Scoring & gap/improvement detection
+MODEL_ANALYSIS        = "openai/gpt-oss-120b"  # Scoring & gap/improvement detection
 MODEL_REFINE          = "openai/gpt-oss-120b"     # Batch gap + custom text refinement
 MODEL_PDF             = "openai/gpt-oss-120b"     # ATS-friendly resume JSON generation
 
@@ -271,6 +271,7 @@ d) Never output empty arrays as section placeholders — if a section has no rea
 Instructions:
 1. Integrate refined gap content into the PROFESSIONAL EXPERIENCE or PROJECTS sections where it logically fits as new bullet points. DO NOT shove all gaps into the Professional Summary. Only put them in the summary if they are high-level overviews.
 2. Apply terminology improvements by replacing original phrasing with exact JD keywords specifically in the Technical Skills, Experience, or Projects sections where they belong. Do not just dump them in the summary; optionally keep original tech in brackets (e.g., "Python (Pandas)").
+2.5. SOFT SKILLS INTEGRATION: Identify any soft skills mentioned in the target Job Description (e.g., leadership, communication, problem-solving, teamwork, adaptability). You MUST organically integrate these soft skills into the candidate's PROFESSIONAL EXPERIENCE, PROJECTS, or PROFESSIONAL SUMMARY sections, adapting them to match the candidate's existing context and achievements.
 3. For Custom Additions: if the user explicitly prefixes an addition with a section name (e.g., 'certificate:', 'education:', 'achievement:'), you MUST create that section if it does not exist (e.g., CERTIFICATIONS, EDUCATION, ACHIEVEMENTS) and place the item there. Do NOT put certificates, education, or achievements into the Professional Summary or Projects. If no prefix is given, incorporate it into the most logical section.
 4. STRICT RULE: NEVER fabricate dates, years, companies, percentages, or ANY numerical metrics. You are STRICTLY FORBIDDEN from mentioning any numerical values in the updated resume unless they are explicitly present in the Original Resume or explicitly provided by the user in the Custom Additions/Gaps. Preserve any percentage or CGPA values present in the Education section.
 5. Keep bullet points concise, start with strong action verbs, and quantify only when data exists in the original resume or user input. DO NOT use bold or markdown formatting (like **bold**) within the text of any section, especially custom additions. For certificates, simply list the name and agency/score without adding extra verbs like "Completed".
@@ -335,7 +336,7 @@ Output JSON with sections in this order (PROFESSIONAL SUMMARY is mandatory, ONLY
 {jd_text}
 """
     messages = [{"role": "user", "content": prompt}]
-    content_str = _call_llm(api_key, model_name, messages, temperature=0.2, max_tokens=4000)
+    content_str = _call_llm(api_key, model_name, messages, temperature=0.2, max_tokens=3000)
     content_str = _strip_markdown_json(content_str)
     resume_data = json.loads(content_str)
 

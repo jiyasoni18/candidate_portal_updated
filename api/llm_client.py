@@ -27,7 +27,6 @@ async def call_openrouter(system_prompt: str, user_content: str, model: str | No
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
         ],
-        "response_format": {"type": "json_object"},
         "max_tokens": max_tokens,
     }
 

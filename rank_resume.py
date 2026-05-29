@@ -609,9 +609,9 @@ Return ONLY a valid JSON object. No markdown, no explanation outside the JSON.
 
   Sources to check — use exact JD wording for each:
 
-  1. SKILL GAPS (from Section 2 & 3): Every mandatory OR good-to-have skill rated ABSENT, PRESENT+WEAK, or NOT FOUND.
-     Copy the EXACT skill name/phrase from the JD's Required or Preferred Skills section.
-     Format: '[Exact JD skill phrase]: [resume evidence or lack thereof] — [Actionable fix with JD keywords to boost score above 85]'
+  1. SKILL GAPS (from Section 2 & 3): Every mandatory OR good-to-have skill rated ABSENT, PRESENT+WEAK, or NOT FOUND. This includes core skills where details are missing in the resume but are emphasized in the JD.
+     Copy the EXACT skill name/phrase from the JD's Required or Preferred Skills section. If it is a Good-to-have skill, you MUST prefix the output with "Good to have: ".
+     Format: '[Good to have: (if applicable)] [Exact JD skill phrase]: [resume evidence or lack thereof] — [Actionable fix with JD keywords to boost score above 85]'
 
   2. EXPERIENCE GAPS (from Gate 2 + Section 1): If E < R, state it.
      Use the exact experience requirement text from the JD.
