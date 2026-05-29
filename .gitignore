@@ -38,6 +38,12 @@ storage/
 .pytest_cache/
 .coverage
 htmlcov/
+tests/
+test_*.py
+frontend/__tests__/
+frontend/vitest*
+pytest.ini
+conftest.py
 
 # IDE
 .vscode/
